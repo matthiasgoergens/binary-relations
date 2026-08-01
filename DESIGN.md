@@ -6,8 +6,8 @@ what the code turned out to be — where implementation contradicted it, that is
 recorded in [`NOTES.md`](./NOTES.md) with the reason, which is more useful than
 a document that has been quietly brought into line. Self-contained: it should
 work without the conversation that produced it. The reasoning behind each
-decision is in [`binary-relations.md`](https://github.com/matthiasgoergens/coordinate-work/blob/master/research/binary-relations.md) and
-[`datascript.md`](https://github.com/matthiasgoergens/coordinate-work/blob/master/research/datascript.md); this file is the *decisions*, not the
+decision is in [`binary-relations.md`](./research/binary-relations.md) and
+[`datascript.md`](./research/datascript.md); this file is the *decisions*, not the
 research.
 
 ---
@@ -262,10 +262,10 @@ Recorded so they do not come back.
 
 ## Where the detail lives
 
-- [`binary-relations.md`](https://github.com/matthiasgoergens/coordinate-work/blob/master/research/binary-relations.md) — the full research note: the
+- [`binary-relations.md`](./research/binary-relations.md) — the full research note: the
   paper this started from (Oliveira, *Functional dependency theory made
   'simpler'*, 2005), what became of that line, the four traditions, the EDSL
   analysis, host-language fit, higher-order operations, and every caution with
   the ones that were later withdrawn marked as such.
-- [`datascript.md`](https://github.com/matthiasgoergens/coordinate-work/blob/master/research/datascript.md) — the source read, the architecture, and
+- [`datascript.md`](./research/datascript.md) — the source read, the architecture, and
   the four gaps that are this project's differentiators.

@@ -251,6 +251,110 @@ on every call (47 lines for this suite) and whose `` `Silent `` alternative is
 not in the README's usage section; and the summary line disagrees with the
 result, printing `0 failing` on a run that returned a shrunk counterexample.
 
+## Prior art: Kahl's relational semigroupoids
+
+The brief lists this as reading priority 2 — "someone built this interface once
+and wrote down what had to bend" — and it was not done before the code was.
+Doing it afterwards turned out to be more useful than doing it first would have
+been, because it became a check on decisions already made under constraint
+rather than a source to copy.
+
+**The citation in the brief is wrong in two ways.** It gives *Semigroupoid
+Interfaces for Relation-Algebraic Programming in Haskell*, MPC 2006. MPC 2006
+is LNCS 4014; this paper is **RelMiCS/AKA 2006, LNCS 4136, pp. 235–250**
+([doi:10.1007/11828563_16](https://doi.org/10.1007/11828563_16)), and Kahl's own
+publication list titles it *Semigroupoid Interfaces for Programming with
+Relations in Haskell*. There is also an expanded journal version that the brief
+does not mention and which is the more relevant one:
+
+> Wolfram Kahl, ***Relational Semigroupoids: Abstract Relation-Algebraic
+> Interfaces for Finite Relations between Infinite Types***, Journal of Logic
+> and Algebraic Programming 76(1), 2008, 60–89.
+
+That subtitle is this library's problem statement verbatim.
+
+### The wall is the same one, and he names it
+
+From the journal abstract: *finite maps or finite relations between infinite
+sets **do not even form a category, since the necessary identities are not
+finite***. The RATH page puts it concretely — a total identity map on `Integer`
+cannot exist.
+
+That is exactly what forced {!Eval} to have three constructors rather than one.
+`id` is the diagonal of an unbounded type; it is not a value.
+
+### Convergent, independently
+
+His stated remedy is that the theory should provide *"operations that would
+produce infinite results replaced with variants that preserve finiteness, but
+still satisfy useful algebraic laws."*
+
+That is, almost word for word, the principle this library arrived at without
+having read him:
+
+| infinite-producing operation | what this library does instead |
+|---|---|
+| `top`, complement | excluded; not finite values |
+| `star` | `star_on_carrier` — reflexive on the carrier of the argument |
+| residual `rdiv` | finite-carrier residual over the domains it can see |
+| the laws for the above | restated in the restricted form that survives, in `Laws` |
+
+The last row is the one I would have expected to be the novel part and is not.
+Discovering that the textbook Galois connection is false here, and writing down
+the carrier-restricted law that holds instead, is precisely "still satisfy
+useful algebraic laws". Two independent arrivals at the same principle is
+decent evidence the principle is forced by the domain rather than chosen.
+
+### Where the designs genuinely diverge
+
+Same wall, different exit.
+
+- **Kahl removes the identity from the algebra.** A semigroupoid is a category
+  without identities, so nothing in the structure ever demands a value that
+  cannot exist. The cost is that every law mentioning `id` has to be restated
+  in terms of domain/range partial identities, and the structure is weaker than
+  a category.
+- **This library keeps `id` and makes it non-enumerable.** `Corefl` represents
+  it symbolically, it absorbs into the finite case on contact (composing with
+  it is a filter), and only an operation that would actually have to enumerate
+  it — `to_list`, `join`, `converse` of a function graph — raises `Unbounded`.
+
+The trade is legible: Kahl buys totality at the cost of the category structure;
+this buys the category structure at the cost of partiality. `id_left_unit` and
+`id_right_unit` are stated in the ordinary way in `Laws` and pass, which they
+could not be in a semigroupoid. Whether the partiality is acceptable depends on
+whether the operations that raise are ones anybody writes, and the evidence so
+far — 400 random expression trees, no `Unbounded` outside the tests written to
+provoke it — is that they are not. **This is the one place a reviewer who knows
+the literature will push, and the answer is now a considered disagreement
+rather than an omission.**
+
+### Two sharpenings
+
+- **"No `top`" is a consequence of representation, not of relations.** RATH is
+  BDD-based (via KURE). A BDD over a finite bit-encoded domain has complement
+  and `top` for free — they are cheap and finite there. What excludes them here
+  is the combination of *sets of pairs* and *unbounded element types*. Worth
+  stating that way rather than as a fact about relation algebra.
+- **There is prior art for M5 too, and it is not the same idea.** Kahl,
+  *Dynamic Symbolic Optimisation for Relation-Algebraic Programming in Haskell*
+  (MACIS 2006, pp. 92–99), builds a self-optimising evaluator for exactly the
+  observation that "equivalent expressions with apparently similar structure may
+  differ widely" in cost. But it optimises against *BDD heuristics* at runtime,
+  not against cardinality statistics. The claim that immutability yields exact,
+  never-stale statistics remains a distinct argument; it is now a distinct
+  argument with a known neighbour rather than an unexamined one.
+
+### What was actually read
+
+The RelMiCS and JLAP abstracts, Kahl's publication list, and the RATH project
+overview. **The paper bodies are paywalled and were not read**, so the Haskell
+type-class definitions, the exact form of his finiteness-preserving variants,
+and his laws are unverified here. Anything above about *his* interface is from
+abstracts; anything about this library is from its code. Getting the JLAP
+version through a library would be worth an hour before making any public claim
+about how the two interfaces compare in detail.
+
 ## Spike results
 
 | # | spike | status |
