@@ -125,9 +125,15 @@ val rdiv : ('a, 'c) t -> ('b, 'c) t -> ('a, 'b) t
 (** Relational division: [(a, b)] whenever every [c] related to [b] by the
     second argument is related to [a] by the first — "the customers who bought
     {e all} of these products". Universal quantification without complement,
-    which is why it survives in a library that has no [top]. [a] ranges over
-    the domain of the first argument: the finite-carrier restriction that keeps
-    the result a value. *)
+    which is why it survives in a library that has no [top].
+
+    This is a {b restricted residual} in the sense of Kahl (2008): the
+    unrestricted residual of two finite relations need not be finite, so the
+    universal condition is conjoined with existence witnesses — [a] ranges over
+    the domain of the first argument and [b] over the domain of the second.
+    Kahl writes the same thing as
+    [(Q /● S) b c = (∀ a → Q a b → S a c) × ∃ (λ a → Q a b)]. See {!Rel.Algebra}
+    and [NOTES.md]. *)
 
 (** {2 Incremental support} *)
 

@@ -1,9 +1,29 @@
 (** Layer 2: the algebra, as module types cut on the joints of the structure
-    lattice — category, allegory, union allegory, division allegory,
-    residuated Kleene allegory. The point of cutting here rather than
-    presenting one flat signature is that {e a backend advertises exactly what
-    it supports}. An interpreter that can compose and take converses but cannot
-    take a fixpoint satisfies {!ALLEGORY} and says so in its type.
+    lattice — semigroupoid, category, allegory, union allegory, division
+    allegory, Kleene. The point of cutting here rather than presenting one flat
+    signature is that {e a backend advertises exactly what it supports}. An
+    interpreter that can compose and take converses but cannot take a fixpoint
+    satisfies {!ALLEGORY} and says so in its type.
+
+    {2 The identity is a joint, and the lowest one}
+
+    The ladder starts below the category, at the {!SEMIGROUPOID}, because the
+    identity is the operation this library cannot represent as a value: [id] is
+    the diagonal of an unbounded type. Kahl reached the same conclusion from
+    the theory side and it is the organising idea of his RATH-Agda development,
+    where the whole hierarchy is built twice, once with identities and once
+    without —
+
+    {v
+      finite maps or finite relations between infinite sets do not even form
+      a category, since the necessary identities are not finite
+    v}
+
+    — so the split is not a local workaround, it is where the subject divides.
+    The practical consequence is visible in this very file: {!plus} needs no
+    identity and lives in {!KLEENE_SEMIGROUPOID}, while {!star} does and lives
+    one level up. A backend that cannot supply an identity can still supply
+    everything below {!CATEGORY}, and its type will say so.
 
     The signatures are also the object language. That is not a coincidence and
     it is the reason the design is tagless-final: the point-free calculus of
@@ -12,11 +32,31 @@
     [module Q (R : RELATIONS) = struct ... end], and interpreting it is
     applying it to {!Eval}, {!Symbolic} or an incremental backend. *)
 
-module type CATEGORY = sig
+(** Composition alone. Everything here is available even when no identity can
+    be represented, which for finite relations over unbounded types is the
+    normal situation rather than an edge case. *)
+module type SEMIGROUPOID = sig
   type ('a, 'b) t
 
-  val id : ('a, 'a) t
   val ( >> ) : ('a, 'b) t -> ('b, 'c) t -> ('a, 'c) t
+end
+
+(** A semigroupoid with identities. Everything from here up assumes a value
+    that this library can only represent symbolically; see {!Eval}. *)
+module type CATEGORY = sig
+  include SEMIGROUPOID
+
+  val id : ('a, 'a) t
+end
+
+(** Converse and meet without an identity — Kahl's "semi-allegory". This is the
+    largest fragment of the relational algebra that a backend with no
+    representable identity can implement in full. *)
+module type SEMI_ALLEGORY = sig
+  include SEMIGROUPOID
+
+  val converse : ('a, 'b) t -> ('b, 'a) t
+  val meet : ('a, 'b) t -> ('a, 'b) t -> ('a, 'b) t
 end
 
 (** Converse and meet. The law that distinguishes an allegory from "a category
@@ -25,10 +65,9 @@ end
     makes the meet interact correctly with composition. It is checked in
     {!Laws}. *)
 module type ALLEGORY = sig
-  include CATEGORY
+  include SEMI_ALLEGORY
 
-  val converse : ('a, 'b) t -> ('b, 'a) t
-  val meet : ('a, 'b) t -> ('a, 'b) t -> ('a, 'b) t
+  val id : ('a, 'a) t
 end
 
 (** Adds joins and a bottom. Relations form a {e distributive} allegory, so
@@ -46,11 +85,32 @@ module type UNION_ALLEGORY = sig
   val bot : ('a, 'b) t
 end
 
-(** Residuals — the adjoints of composition. [rdiv x y] is the largest [z] with
-    [z >> y ⊆ x], and [ldiv x y] the largest [z] with [x >> z ⊆ y]. These are
-    where "for all" lives once complement has been given up: [rdiv] is
+(** Residuals — the adjoints of composition. [rdiv x y] is "the largest [z]
+    with [z >> y ⊆ x]", and [ldiv x y] the largest [z] with [x >> z ⊆ y]. These
+    are where "for all" lives once complement has been given up: [rdiv] is
     relational division, "the customers who bought every one of these
-    products". *)
+    products".
+
+    The scare quotes are load-bearing. The residual of a finite relation need
+    not be finite — take [y] empty and every [z] qualifies, so the largest is
+    the universal relation — so what is implemented here is the {e restricted
+    residual}, which conjoins an existence condition to the universal one.
+    That construct is Kahl's, introduced for exactly this reason:
+
+    {v
+      Restricted residuals were first introduced by Kahl (2008) in the context
+      of semigroupoids motivated by applications to finite relations between
+      infinite sets, where the residuals of finite relations are not
+      necessarily finite again. Restricted residuals restrict attention to the
+      "interesting part" of residuals and preserve finiteness in that context.
+    v}
+
+    Consequently the Galois connection does not hold in its textbook form, and
+    {!Laws} states the two that do. They are his: [rdiv-sound] is
+    [/-universal′], and [rdiv-maximal-on-carrier] is
+    [●/-cancel-inner : ran T ⊑ dom S → T ⊑ (T # S) ●/ S], whose guard is the
+    same domain restriction. Restricted residuals require a {e domain}
+    operator, which here is the coreflexive [meet id (r >> converse r)]. *)
 module type DIVISION_ALLEGORY = sig
   include UNION_ALLEGORY
 
@@ -58,9 +118,28 @@ module type DIVISION_ALLEGORY = sig
   val ldiv : ('a, 'b) t -> ('a, 'c) t -> ('b, 'c) t
 end
 
-(** Fixpoints. [plus] is transitive closure and [star] its reflexive variant.
+(** Transitive closure, which needs no identity.
+
     This is the first capability plain Codd cannot express and the confirmed
-    business-logic case: org charts, bill-of-materials, reachability. *)
+    business-logic case: org charts, bill-of-materials, reachability. It is
+    also finite whenever its argument is, which is why it sits below the
+    identity line: the closure of a finite relation only ever adds pairs
+    between elements already present.
+
+    Kahl's [KleeneSemigroupoid] is the same level — "Kleene categories without
+    identities … essentially a heterogeneous version of the {e 1-free Kleene
+    algebras} of Kozen (1998)" — carrying transitive closure and no star. *)
+module type KLEENE_SEMIGROUPOID = sig
+  include SEMIGROUPOID
+
+  val plus : ('a, 'a) t -> ('a, 'a) t
+end
+
+(** Adds the reflexive-transitive closure, which does {e not} come for free:
+    [star r] contains the identity on everything, so it is only a finite value
+    once restricted to a carrier. That restriction is the concession;
+    {!KLEENE_SEMIGROUPOID.plus} is not one. Kahl draws the same line, between
+    [KleeneSemigroupoid] and [KleeneCategory]. *)
 module type KLEENE_ALLEGORY = sig
   include DIVISION_ALLEGORY
 

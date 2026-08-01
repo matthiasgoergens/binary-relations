@@ -404,20 +404,40 @@ carrier, and it means `star_on_carrier` is the concession and `plus` is not one.
 **No `top` anywhere.** Zero occurrences of a universal-relation constant in
 44k lines of the development, consistent with excluding it here.
 
-### What this changes
+### What this changed
 
-Nothing in the code. It changes what the code should be *called* and what it
-should cite: `rdiv` is a restricted residual (Kahl 2008), the guarded law is
-his `●/-cancel-inner`, and `plus`-without-`star` is the heterogeneous 1-free
-Kleene algebra of Kozen (1998). Using the established names costs nothing and
-makes the design legible to anyone who knows the field — which for the stated
-audience is the point.
+The names and citations are now in the code: `rdiv` is documented as a
+restricted residual with Kahl's definition alongside it, the two laws in `Laws`
+carry his names (`/-universal′`, `●/-cancel-inner`), and `plus` is marked as the
+1-free fragment. Free to adopt, and for an artefact meant to be read by someone
+who knows this field, using the field's names is most of the benefit of having
+read it.
 
-The one place this library still departs deliberately is the identity, and the
-comparison is now sharper rather than weaker: Kahl removes it and works in
-semigroupoids throughout; this keeps it as a non-enumerable value. His whole
-hierarchy is built twice over, once with identities and once without, which is
-evidence the choice is real and consequential rather than a detail.
+**One thing was not merely cosmetic.** Kahl's organising idea is that the
+identity is where the subject divides — his whole hierarchy is built twice,
+once with identities and once without — and this library already half-embodied
+that without saying so. The signature ladder now starts one rung lower:
+
+- `SEMIGROUPOID` — composition alone.
+- `CATEGORY` — adds `id`, the operation that cannot be a value here.
+- `SEMI_ALLEGORY` — converse and meet {e without} an identity, the largest
+  fragment a backend with no representable identity can implement in full.
+- `KLEENE_SEMIGROUPOID` — transitive closure, which needs no identity, against
+  `KLEENE_ALLEGORY`, which adds `star` and does.
+
+That last split is the one worth having. `plus` is finite whenever its argument
+is, because the closure of a finite relation only adds pairs between elements
+already present; `star` contains the identity on everything and is a finite
+value only once restricted to a carrier. Before this, both looked like
+compromises of the same kind and `NOTES.md` described them that way. They are
+not: `star_on_carrier` is a concession and `plus` is not one, and the ladder now
+says so in types rather than in prose.
+
+It also improves the answer to the objection a reviewer will raise. "We raise
+`Unbounded` sometimes" becomes "here is the fragment that needs no identity at
+all, and here is precisely what an identity costs you" — which is a claim about
+the design rather than an apology for it. `RELATIONS` is unchanged, so nothing
+downstream moved.
 
 ## Spike results
 

@@ -104,7 +104,18 @@ module Make (R : Algebra.EQ_RELATIONS) = struct
 
      What survives is the connection restricted to those carriers, plus the
      cancellation law in full. This was found by the property test rather than
-     by reading, which is the argument for having the laws be code. *)
+     by reading, which is the argument for having the laws be code — and it is
+     not new. Kahl calls the finiteness-preserving variant a {e restricted
+     residual} (2008), and the two laws below are his, under his names:
+
+       [rdiv-sound]              is  [/-universal′ : Q ⊑ S ●/ R → Q # R ⊑ S]
+       [rdiv-maximal-on-carrier] is  [●/-cancel-inner : ran T ⊑ dom S →
+                                        T ⊑ (T # S) ●/ S]
+
+     The guard on the second is the same range-in-domain containment as the
+     [dom_ a >> c >> dom_ b] restriction written here. Independent arrival at
+     the same pair of laws, which is worth more as evidence than either alone;
+     see [NOTES.md]. *)
   let rng_ r = meet id (converse r >> r)
 
   let division_allegory =
@@ -126,6 +137,8 @@ module Make (R : Algebra.EQ_RELATIONS) = struct
 
   let kleene =
     [
+      (* [plus] needs no identity — it is the 1-free fragment, Kozen (1998) —
+         whereas [star] does, which is why only the latter is carrier-restricted. *)
       ("plus-contains-base", fun { a; _ } -> sub a (plus a));
       ("plus-transitive", fun { a; _ } -> sub (plus a >> plus a) (plus a));
       ("plus-unfold", fun { a; _ } -> eq (plus a) (join a (a >> plus a)));
