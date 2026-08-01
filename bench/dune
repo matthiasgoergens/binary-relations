@@ -1,0 +1,5 @@
+(executable
+ (name build)
+ (libraries rel base stdio unix)
+ (flags
+  (:standard -warn-error -a)))

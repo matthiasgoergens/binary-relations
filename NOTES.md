@@ -655,8 +655,16 @@ framing exists to avoid.
 - No worst-case-optimal joins; the planner does binary joins only.
 - Filter pushdown is not implemented — `where_` re-associates within a chain
   but is not pushed through `meet` or `fork`.
-- No transients or uniqueness-mode builder. Bulk construction goes through
-  `of_list`, which is fine at these sizes and is the next thing to measure if
-  construction shows up in a profile.
+- **Transients: measured, and not worth building.** The brief budgets for an
+  O(1)-in/out mutable builder behind an immutable interface. On 50 000 pairs
+  (`bench/build.ml`): `of_list` 13.0 ms, and building the same relation by
+  repeated `union` with a singleton 15.0 ms — **1.2×**, at 0.30 µs per insert.
+  There is no per-insert rebuild for a transient to eliminate, because
+  `Set.union` against a singleton is already O(log n) and shares structure.
+  What the same benchmark does show is that the **first index build costs
+  10.0 ms**, comparable to constructing the relation at all — so if anything on
+  this layer is worth optimising it is the index, not construction. That is the
+  purpose-built-layer-0 idea from the top of this file, now with a number
+  attached rather than a hunch.
 - `group` returns a sorted list rather than a set type, which is a canonical
   set representation but types the nesting as `'b list`.
