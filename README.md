@@ -127,7 +127,7 @@ M0–M5 of the brief are in. The library works, the demo works, and the
 differentiator works.
 
 Not done, with reasons in [`NOTES.md`](./NOTES.md#not-done): no surface syntax
-layer, no worst-case-optimal joins, no filter pushdown through `meet`/`fork`,
-no transients, and spike 1 (OxCaml modes for relational contraction) is
-unattempted because this switch is a stock compiler — the brief expects that
-spike to fail and its 30-minute budget is intact.
+layer, no general worst-case-optimal join (one cyclic shape is fused, longer
+cycles still materialise), no filter pushdown through `meet`/`fork`, and no
+transients. All five live spikes are now closed; spike 1 came out negative, as
+the brief predicted.

@@ -575,7 +575,7 @@ downstream moved.
 | 6 | semi-naive evaluation | **done** — 21.5× fewer tuples touched than the naive fixpoint on a 30-link chain |
 | 7 | `Incremental` as a second interpreter | **done** — 751× on a one-tuple insert; the deletion boundary is real and documented |
 | 8 | lazy automatic index selection | **done** — and it collapsed into index *building*, see above |
-| 1 | OxCaml modes for relational contraction | **not attempted.** The project-local switch is a stock 5.3.0 compiler, and this spike needs OxCaml. The brief expects it to fail; the 30-minute budget is intact and unspent |
+| 1 | OxCaml modes for relational contraction | **done, negative, as expected.** Reachable once `rel` became Base-only. `once`/`unique` do not constrain a data-shaped term used twice; `once` does forbid a second use of a *closure*-shaped one — but the `copy` that contraction needs cannot then be written, because writing it requires exactly the second use being forbidden. The modality is affine and contraction is the rule affineness deletes; the way back in linear logic is `!`, whose OxCaml counterpart (`many`) restores unrestricted duplication rather than mediated duplication. Full write-up and probes in `~/prog/binary-relations-notes/spike1-oxcaml/` |
 
 ## Open questions, updated
 
