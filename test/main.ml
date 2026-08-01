@@ -437,6 +437,151 @@ let test_incremental () =
     (Relation.equal (Incr.Observer.value obs) (one_shot a3))
 
 (* ------------------------------------------------------------------ *)
+(* Trying to break it                                                  *)
+(* ------------------------------------------------------------------ *)
+
+(* Everything above this point tests a case I chose, which means it shares
+   every assumption the implementation does and can only agree with me. The
+   two things most worth attacking are the two whose failure mode is a wrong
+   answer rather than a slow one: the optimiser and the incremental view. *)
+
+let rng = Random.State.make [| 20260801 |]
+
+let random_relation ~elems ~size =
+  Relation.of_list
+    (List.init (Random.State.int rng size + 1) ~f:(fun _ ->
+       (Random.State.int rng elems, Random.State.int rng elems)))
+
+(* Random well-typed expression trees over (int, int). Every constructor here
+   keeps the value finite, so [Eval] can compare results; the unbounded cases
+   are covered separately above. *)
+let rec random_tree depth : (int, int) Symbolic.t =
+  let leaf () = Symbolic.of_relation (random_relation ~elems:8 ~size:10) in
+  if depth <= 0 then leaf ()
+  else
+    let sub () = random_tree (depth - 1) in
+    match Random.State.int rng 9 with
+    | 0 | 1 | 2 -> Symbolic.( >> ) (sub ()) (sub ())
+    | 3 -> Symbolic.converse (sub ())
+    | 4 -> Symbolic.meet (sub ()) (sub ())
+    | 5 -> Symbolic.join (sub ()) (sub ())
+    | 6 -> Symbolic.plus (sub ())
+    | 7 -> Symbolic.star (sub ())
+    | _ ->
+      (* a filter, which is a barrier the planner must not reorder across *)
+      let threshold = Random.State.int rng 8 in
+      Symbolic.( >> ) (sub ()) (Symbolic.where_ (fun x -> Symbolic.V.( >. ) x (Symbolic.V.int_ threshold)))
+
+let test_optimiser_is_sound () =
+  section "Adversarial: does the optimiser ever change the answer?";
+  let mismatches = ref 0 in
+  let rewritten = ref 0 in
+  let trees = 400 in
+  for _ = 1 to trees do
+    let t = random_tree 4 in
+    let planned = Plan.optimise t in
+    if not (String.equal (Symbolic.to_string t) (Symbolic.to_string planned)) then incr rewritten;
+    let before = Symbolic.run t in
+    let after = Symbolic.run planned in
+    if not (Relation.equal before after) then (
+      incr mismatches;
+      if !mismatches <= 3 then
+        printf "   MISMATCH\n     %s\n     %s\n" (Symbolic.to_string t)
+          (Symbolic.to_string (Plan.optimise t)))
+  done;
+  printf "   %d random expression trees, of which the planner rewrote %d\n" trees !rewritten;
+  check_eq_int "the optimiser never changed a result" ~expect:0 !mismatches;
+  (* Without this the test above could pass by the planner doing nothing. *)
+  check "and the test is not vacuous: most trees were actually rewritten"
+    (!rewritten * 2 > trees)
+
+(* A mutation that shares structure with what it came from, which is the
+   realistic case and the one the delta path is tuned for. *)
+let mutate r ~elems =
+  let adds =
+    Relation.of_list
+      (List.init (Random.State.int rng 3) ~f:(fun _ ->
+         (Random.State.int rng elems, Random.State.int rng elems)))
+  in
+  let existing = Relation.to_list r in
+  let dels =
+    if List.is_empty existing || Random.State.int rng 2 = 0 then Relation.empty
+    else
+      Relation.of_list
+        (List.init (Random.State.int rng 3) ~f:(fun _ ->
+           List.nth_exn existing (Random.State.int rng (List.length existing))))
+  in
+  Relation.union (Relation.diff r dels) adds
+
+let test_incremental_is_sound () =
+  section "Adversarial: does the incremental view ever drift from the truth?";
+  let module Q (R : Algebra.RELATIONS) = struct
+    open R
+
+    let q ~a ~b ~c = (a >> b) >> c
+  end in
+  let module QE = Q (Eval) in
+  let module QI = Q (Incr) in
+  let a0 = random_relation ~elems:10 ~size:15 in
+  let b0 = random_relation ~elems:10 ~size:15 in
+  let c0 = random_relation ~elems:10 ~size:15 in
+  let va = Incr.Var.create a0 and vb = Incr.Var.create b0 and vc = Incr.Var.create c0 in
+  let obs =
+    Incr.observe (QI.q ~a:(Incr.Var.watch va) ~b:(Incr.Var.watch vb) ~c:(Incr.Var.watch vc))
+  in
+  let a = ref a0 and b = ref b0 and c = ref c0 in
+  let drifted = ref 0 in
+  let rounds = 300 in
+  Incr.stabilize ();
+  Incr.reset_counters ();
+  for _ = 1 to rounds do
+    (* Change one input, sometimes two, by inserting and deleting at once. *)
+    (match Random.State.int rng 3 with
+    | 0 ->
+      a := mutate !a ~elems:10;
+      Incr.Var.set va !a
+    | 1 ->
+      b := mutate !b ~elems:10;
+      Incr.Var.set vb !b
+    | _ ->
+      c := mutate !c ~elems:10;
+      Incr.Var.set vc !c);
+    Incr.stabilize ();
+    let truth =
+      Eval.to_relation
+        (QE.q ~a:(Eval.of_relation !a) ~b:(Eval.of_relation !b) ~c:(Eval.of_relation !c))
+    in
+    if not (Relation.equal (Incr.Observer.value obs) truth) then incr drifted
+  done;
+  printf
+    "   %d rounds of insert-and-delete against a from-scratch recomputation\n\
+    \   composition nodes: %d maintained by delta, %d fell back to recomputing\n"
+    rounds (Incr.delta_updates ()) (Incr.full_recomputes ());
+  check_eq_int "the maintained view never drifted" ~expect:0 !drifted;
+  (* And the delta path was genuinely exercised: a node that quietly
+     recomputed every time would pass the check above and mean nothing. *)
+  check "the delta path was taken, not merely available" (Incr.delta_updates () > rounds / 4)
+
+(* The planner is only allowed to be wrong about cost, never about meaning.
+   Its estimate should at least be in the right order of magnitude for a plan
+   it can see all the way through, or the DP is optimising noise. *)
+let test_estimate_is_calibrated () =
+  section "Adversarial: is the cost estimate anywhere near the measurement?";
+  let a = Relation.of_list (List.init 400 ~f:(fun i -> (i, i % 40))) in
+  let b = Relation.of_list (List.init 400 ~f:(fun i -> (i % 40, i))) in
+  let t = Symbolic.(of_relation a >> of_relation b) in
+  let predicted = Plan.estimated_cost t in
+  ignore (Relation.stats a : Relation.stats);
+  ignore (Relation.stats b : Relation.stats);
+  Relation.reset_counters ();
+  ignore (Symbolic.run t : (int, int) Relation.t);
+  let actual = Relation.tuples_touched () in
+  printf "   predicted %.0f tuples, measured %d\n" predicted actual;
+  check "the estimate is within an order of magnitude of the measurement"
+    (Float.( > ) predicted (Float.of_int actual /. 10.)
+    && Float.( < ) predicted (Float.of_int actual *. 10.))
+
+(* ------------------------------------------------------------------ *)
 
 let () =
   test_laws ();
@@ -446,5 +591,8 @@ let () =
   test_unbounded ();
   test_planner ();
   test_incremental ();
+  test_optimiser_is_sound ();
+  test_incremental_is_sound ();
+  test_estimate_is_calibrated ();
   printf "\n%d checks, %d failures\n" !checks !failures;
   if !failures > 0 then exit 1

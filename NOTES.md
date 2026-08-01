@@ -163,6 +163,31 @@ one.
 whole program. Fine for a demonstration, wrong for a library someone embeds;
 the fix is to make it a functor over the state.
 
+## Attacking it rather than demonstrating it
+
+Everything measured above is a case I chose, which shares every assumption the
+implementation does and can therefore only agree with me. The two components
+whose failure mode is a *wrong answer* rather than a slow one get the opposite
+treatment:
+
+- 400 randomly generated expression trees, each rewritten by `Plan.optimise`
+  and re-run against the original.
+- 300 rounds of random insert-and-delete on three inputs of a live graph, each
+  checked against a from-scratch recomputation.
+
+Both carry a **vacuity check**, because both have an obvious silent
+degeneration: an optimiser that rewrites nothing and a composition node that
+falls back to recomputing every time would each pass the correctness assertion
+while meaning nothing at all. So the tests assert that the planner actually
+rewrote most trees (335 of 400) and that the delta path was actually taken
+(210 times against 128 fallbacks). `Incr.delta_updates` and
+`Incr.full_recomputes` exist for no other reason.
+
+`Plan.build` raises rather than falling back to a right-deep build when a
+bracket and a chain disagree. That case is unreachable, but a planner that
+silently emitted a different plan from the one it costed would still be
+correct — and would make every measurement in this file a lie.
+
 ## Spike results
 
 | # | spike | status |

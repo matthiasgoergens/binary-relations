@@ -42,6 +42,19 @@ module I = Incremental.Make ()
 
 let stabilize = I.stabilize
 
+(* Instrumentation, so that a test can tell whether the delta path was
+   actually taken. Without it, a composition node that fell back to
+   recomputing every single time would still pass every correctness test --
+   the answers would be right and the whole point would be missing. *)
+let delta_count = ref 0
+let recompute_count = ref 0
+let delta_updates () = !delta_count
+let full_recomputes () = !recompute_count
+
+let reset_counters () =
+  delta_count := 0;
+  recompute_count := 0
+
 module Impl = struct
   module V = Eval.V
 
@@ -76,6 +89,7 @@ module Impl = struct
       match (ex, ey) with
       | Eval.Fin rx, Eval.Fin ry -> (
         let recompute () =
+          incr recompute_count;
           let out = Relation.compose rx ry in
           prev := Some (rx, ry, out);
           Eval.Fin out
@@ -94,6 +108,7 @@ module Impl = struct
               Relation.union out
                 (Relation.union (Relation.compose rx add_y) (Relation.compose add_x ry))
             in
+            incr delta_count;
             prev := Some (rx, ry, out');
             Eval.Fin out'
           end)

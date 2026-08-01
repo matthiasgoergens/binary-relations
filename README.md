@@ -71,6 +71,15 @@ comment. Numbers are tuples touched, from `Relation.tuples_touched`.
 | an unchanged sibling subtree is not recomputed | 2 tuples in the steady state |
 | the scalar language covers ordinary business predicates | 10 of 14; 4 need the escape hatch |
 
+Two of those are the ones whose failure mode is a wrong answer rather than a
+slow one, so they are attacked rather than demonstrated: 400 randomly generated
+expression trees are rewritten by the planner and re-run against the original,
+and 300 rounds of random insert-and-delete are checked against a from-scratch
+recomputation. Both also assert they are not vacuous — the planner actually
+rewrote 335 of the 400 trees, and the delta path was taken 210 times against
+128 fallbacks. A no-op optimiser and a composition node that quietly recomputed
+every time would both pass the correctness check and mean nothing.
+
 The planner's own statistics cost one index build per relation — exact and
 never stale is not the same as free, and
 [`NOTES.md`](./NOTES.md#the-planner-refuses-rather-than-guesses) records how
@@ -85,7 +94,7 @@ hand-rolled anything: no bespoke tree, no bespoke test framework.
 opam switch create . ocaml-base-compiler.5.3.0 --no-install
 opam install --switch=. core incremental incr_map base_quickcheck ppx_jane
 dune build
-dune exec test/main.exe          # 91 checks, including 47 property-checked laws
+dune exec test/main.exe          # 96 checks, including 47 property-checked laws
 dune exec examples/org_chart.exe # closure, both directions, division, live updates
 dune exec examples/predicates.exe # spike 4: how big must the scalar language be?
 ```

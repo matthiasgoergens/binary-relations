@@ -187,7 +187,16 @@ let plan_run (infos : info array) : bracket * float =
 let rec build : type a c. bracket -> (a, c) chain -> (a, c) Symbolic.t =
  fun br ch ->
   match br with
-  | BLeaf -> ( match ch with Cons (x, Nil) -> x | Nil -> Id | Cons (_, _) -> right_deep ch)
+  (* A bracket is built for a chain of a known length, so these two cases are
+     unreachable. They raise rather than quietly falling back to a right-deep
+     build: a planner that silently emits a different plan from the one it
+     costed would still be correct, and would make every measurement above a
+     lie. *)
+  | BLeaf -> (
+    match ch with
+    | Cons (x, Nil) -> x
+    | Nil -> failwith "Plan.build: bracket and chain disagree (empty segment)"
+    | Cons (_, _) -> failwith "Plan.build: bracket and chain disagree (segment too long)")
   | BSplit (n, bl, brr) ->
     let (Split (l, r)) = split_at n ch in
     Comp (build bl l, build brr r)
