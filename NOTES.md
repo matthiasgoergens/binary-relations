@@ -354,7 +354,10 @@ closed. Kahl's **RATH-Agda 2.2** is a freely downloadable literate Agda
 development of exactly these theories
 ([`cas.mcmaster.ca/relmics/RATH-Agda/`](https://www.cas.mcmaster.ca/relmics/RATH-Agda/),
 ~2.4 MB PDF, 44k lines of extracted text) and it is a later and more complete
-statement than either 2006 paper. Everything below is quoted from it.
+statement than either 2006 paper. Everything below is quoted from it. A local
+copy, with the exact quoted lines and a note on how it was tracked down, is in
+`~/prog/binary-relations-notes/rath-agda/` — kept out of this repo because the
+documents are third-party.
 
 **The finite-carrier residual is a known construct called a *restricted
 residual*, and Kahl introduced it for precisely this reason.** RATH-Agda §15:
