@@ -238,6 +238,97 @@ let test_unbounded () =
   check "join with bot is fine even unbounded" (Poly.equal (Eval.to_list (Eval.join Eval.bot (Eval.of_list [ (1, 1) ]))) [ (1, 1) ])
 
 (* ------------------------------------------------------------------ *)
+(* M5 — the planner                                                    *)
+(* ------------------------------------------------------------------ *)
+
+(* Built fresh each time so that no index survives from a previous
+   measurement: comparing two plans is only fair if both start cold. *)
+let three_relations () =
+  let a = Relation.of_list (List.init 500 ~f:(fun i -> (i, i))) in
+  let b = Relation.of_list (List.init 500 ~f:(fun i -> (i, i + 1))) in
+  let c = Relation.of_list [ (300, 0) ] in
+  (a, b, c)
+
+let test_planner () =
+  section "M5: planning on exact statistics";
+  let a, b, c = three_relations () in
+  let written = Symbolic.(of_relation a >> of_relation b >> of_relation c) in
+  print_endline (Plan.explain written);
+
+  (* Correctness first: an optimiser that is fast and wrong is worse than
+     none. Same relations, both plans, results compared. *)
+  let planned = Plan.optimise written in
+  check "the planned tree computes the same relation"
+    (Relation.equal (Symbolic.run written) (Symbolic.run planned));
+
+  (* Then the measurement, and the fair version of it took a correction worth
+     recording. Statistics are exact and never stale, but they are not free:
+     [Relation.stats] forces both indexes, so planning a three-leaf chain cold
+     costs six index builds. Charging that to the planned run and not to the
+     unplanned one made the plan look slower than the order written.
+
+     The honest comparison gives both sides the same information — the indexes
+     get built either way, because execution needs them too — and measures
+     what the plan actually controls, which is execution. The one-time cost of
+     knowing the statistics is reported separately below rather than hidden. *)
+  let run_chain ~planned =
+    let a, b, c = three_relations () in
+    let t = Symbolic.(of_relation a >> of_relation b >> of_relation c) in
+    let t = if planned then Plan.optimise t else t in
+    let info_cost =
+      Relation.reset_counters ();
+      List.iter [ Relation.stats a; Relation.stats b; Relation.stats c ] ~f:(fun (_ : Relation.stats) -> ());
+      Relation.tuples_touched ()
+    in
+    Relation.reset_counters ();
+    let r = Symbolic.run t in
+    (r, Relation.tuples_touched (), info_cost)
+  in
+  let res_w, cost_written, info_w = run_chain ~planned:false in
+  let res_p, cost_planned, _ = run_chain ~planned:true in
+  printf "   statistics for three relations cost %d tuples, once per value\n" info_w;
+  printf "   execution: as written %d tuples, planned %d (%.0fx)\n" cost_written cost_planned
+    (Float.of_int cost_written /. Float.of_int (Int.max 1 cost_planned));
+  check "the plan touches strictly fewer tuples than the order written"
+    (cost_planned < cost_written);
+  check "and both orders compute the same relation" (Relation.equal res_w res_p);
+
+  (* Pushing converse to the leaves: at a leaf it is free, because the index
+     is already there. *)
+  let a, b, _ = three_relations () in
+  let conv_written = Symbolic.(converse (of_relation a >> of_relation b)) in
+  let conv_planned = Plan.optimise conv_written in
+  check "converse is pushed down to the leaves"
+    (String.equal (Symbolic.to_string conv_planned) "(«500» >> «500»)");
+  check "and it still computes the same relation"
+    (Relation.equal (Symbolic.run conv_written) (Symbolic.run conv_planned));
+
+  (* Simplification of units and absorbing elements. *)
+  check "id is eliminated"
+    (String.equal Symbolic.(to_string (Plan.optimise (id >> of_relation a >> id))) "«500»");
+  check "bot absorbs" (String.equal Symbolic.(to_string (Plan.optimise (of_relation a >> bot))) "bot");
+
+  (* And the honest part: the planner declines to reorder across something it
+     cannot cost, and says so. *)
+  let module Q (R : Algebra.RELATIONS) = struct
+    open R
+
+    let q =
+      of_relation a
+      >> where_ (fun x -> R.V.opaque ~name:"business_rule" (fun n -> n % 7 = 0) x)
+      >> of_relation b
+  end in
+  let module S = Q (Symbolic) in
+  let spots = Plan.blind_spots S.q in
+  printf "   blind spots: %s\n" (String.concat ~sep:"; " spots);
+  check "an opaque predicate is reported as a hole in the cost model"
+    (List.exists spots ~f:(fun s -> String.is_substring s ~substring:"opaque"));
+  check "and the barrier does not stop the program from running"
+    (Relation.equal
+       (Symbolic.run S.q)
+       (Symbolic.run (Plan.optimise S.q)))
+
+(* ------------------------------------------------------------------ *)
 
 let () =
   test_laws ();
@@ -245,5 +336,6 @@ let () =
   test_scalar ();
   test_closure ();
   test_unbounded ();
+  test_planner ();
   printf "\n%d checks, %d failures\n" !checks !failures;
   if !failures > 0 then exit 1
