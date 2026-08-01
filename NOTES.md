@@ -635,12 +635,32 @@ is pushed to leaves. And the way you write a *cycle* — `constrain` between two
 already-bound variables — produces exactly `meet (a >> b) c`, the shape the
 fusion rewrite handles, so the surface and the optimiser meet in the middle.
 
-**The fragment is a real restriction and it raises rather than guessing.** A
-variable of degree three, or a disconnected query, gives `Unsupported` with the
-reason. Lifting it is general conjunctive-query compilation — pick a join
-order over the whole hypergraph rather than walking a path — which is the
-natural next piece here and is the same problem the planner solves one layer
-down, so the two should probably be one thing eventually.
+**Compilation is variable elimination**, which turned out to be the whole of
+general conjunctive-query compilation for binary atoms. Three rules, one per
+operation of the algebra: a dangling variable becomes a coreflexive on its
+neighbour (a semi-join — this is what makes it Yannakakis-shaped rather than
+nested-loop); a waypoint contracts by composition; parallel atoms merge by
+meet. That reduces any series-parallel query graph to one edge between the
+answer variables, which is a far wider fragment than the path-walking first
+draft — a branching query now compiles to
+`(manages >> (dom_(manages) >> dept))` instead of raising.
+
+What is left over is a core where every non-answer variable has degree three
+or more. That needs tabulation and still raises `Unsupported`, as does a
+disconnected query, since a cross product is not representable without a
+universal relation.
+
+**Two of the three rules shipped broken in the first draft and the failure was
+silent.** Each oriented its edges by `flip`, which allocates, and then filtered
+the edge list by `phys_equal` against the *oriented copy* rather than the edge
+actually in the list — so they reported progress while removing nothing, and
+the reduction spun forever. The termination argument is sound (every rule
+removes an edge), so the fix was to keep the originals for removal, and the
+step counter that found it is now a permanent invariant check with a message
+saying it indicates a bug in the rules rather than a hard query. Worth
+recording because the bug is invisible to types, invisible to a quick reading,
+and produces a hang rather than a wrong answer — and because I fixed one of
+the three, verified that one, and assumed the other two had applied.
 
 Atoms are `('e, 'e) Relation.t`: one element type per query. That covers the
 confirmed business case and keeps variables monomorphic, which is what makes

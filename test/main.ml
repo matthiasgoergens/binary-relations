@@ -805,20 +805,40 @@ let test_query_surface () =
   check "the triangles are the right ones"
     (Poly.equal [ (0, 2); (1, 3) ] (Relation.to_list (Symbolic.run triangle)));
 
-  (* And the fragment boundary is loud rather than silently wrong. *)
+  (* A branching query: y has degree three, which the path-walking compiler
+     refused. Variable elimination handles it — the dangling branch becomes a
+     semi-join coreflexive on y, after which y is an ordinary waypoint. *)
+  let branching =
+    Query.compile (fun x ->
+      let open Query in
+      let* y = step manages x in
+      let* _z = step manages y in
+      (* _z is dangling: it constrains y to be someone who manages somebody *)
+      let* w = step dept y in
+      ret w)
+  in
+  printf "   branching compiles : %s\n" (Symbolic.to_string branching);
+  check "a dangling branch becomes a semi-join, not an Unsupported"
+    (Poly.equal [ ("alice", "eng"); ("alice", "sales") ]
+       (Relation.to_list (Symbolic.run branching)));
+
+  (* The boundary is still real, just further out: a core where every non-answer
+     variable has degree three or more needs tabulation. *)
   let unsupported =
     match
       Query.compile (fun x ->
         let open Query in
         let* y = step manages x in
-        let* _z = step manages y in
-        let* w = step dept y in
+        let* z = step manages y in
+        let* w = step manages z in
+        let* () = constrain manages y w in
+        let* () = constrain manages x z in
         ret w)
     with
     | _ -> false
     | exception Query.Unsupported _ -> true
   in
-  check "a shape outside the fragment raises rather than guessing" unsupported
+  check "an irreducible core still raises rather than guessing" unsupported
 
 (* ------------------------------------------------------------------ *)
 
