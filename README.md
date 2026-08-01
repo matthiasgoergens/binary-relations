@@ -28,7 +28,7 @@ Five layers, bottom to top:
 |---|---|---|
 | 0 | persistent sorted structures | `Core.Map` / `Core.Set` — [not purpose-built, and that is a finding](./NOTES.md#layer-0-not-built-and-that-is-the-finding) |
 | 1 | the relation value | `lib/relation.ml` — pairs plus lazily built, memoised indexes and exact statistics |
-| 2 | the algebra | `lib/algebra.ml` — category → allegory → union → division → Kleene, plus products and the scalar language |
+| 2 | the algebra | `lib/algebra.ml` — semigroupoid → category → allegory → union → division → Kleene, plus products and the scalar language. The ladder starts below the category because [the identity is where the subject divides](./NOTES.md#what-this-changed) |
 | 3 | interpreters | `lib/eval.ml`, `lib/symbolic.ml`, `lib/incr.ml` |
 | 4 | planning | `lib/plan.ml` |
 
