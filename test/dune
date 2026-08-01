@@ -1,0 +1,7 @@
+(test
+ (name main)
+ (libraries rel core base_quickcheck)
+ (preprocess
+  (pps ppx_jane))
+ (flags
+  (:standard -warn-error -a)))

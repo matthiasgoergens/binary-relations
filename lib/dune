@@ -1,0 +1,7 @@
+(library
+ (name rel)
+ (libraries core)
+ (preprocess
+  (pps ppx_jane))
+ (flags
+  (:standard -warn-error -a)))
