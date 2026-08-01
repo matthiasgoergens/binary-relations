@@ -591,9 +591,37 @@ downstream moved.
 - **`let*` or comprehensions for the surface** — not attempted. The library
   surface is still the raw combinators.
 
+## The surface, and the fragment it covers
+
+`Query` is the answer to the brief's open question, and it comes out on the
+`let*` side rather than comprehensions. A query is a set of atoms — a relation
+between two variables — plus the two variables the answer is about;
+`compile` walks a path from source to target composing as it goes, and any
+leftover atom whose ends are the answer's own endpoints becomes a `meet`.
+
+Two things make it more than sugar. It compiles **to the algebra**, so nothing
+below it is bypassed: the planner still runs, `id` is simplified away, converse
+is pushed to leaves. And the way you write a *cycle* — `constrain` between two
+already-bound variables — produces exactly `meet (a >> b) c`, the shape the
+fusion rewrite handles, so the surface and the optimiser meet in the middle.
+
+**The fragment is a real restriction and it raises rather than guessing.** A
+variable of degree three, or a disconnected query, gives `Unsupported` with the
+reason. Lifting it is general conjunctive-query compilation — pick a join
+order over the whole hypergraph rather than walking a path — which is the
+natural next piece here and is the same problem the planner solves one layer
+down, so the two should probably be one thing eventually.
+
+Atoms are `('e, 'e) Relation.t`: one element type per query. That covers the
+confirmed business case and keeps variables monomorphic, which is what makes
+the binding operators readable at all. A heterogeneous version needs variables
+that carry their own types, and with them the type-level machinery the binary
+framing exists to avoid.
+
 ## Not done
 
-- No surface syntax layer (binding operators or comprehensions).
+- The surface covers paths plus cycle-closing atoms; general conjunctive
+  queries raise `Unsupported`.
 - No worst-case-optimal joins; the planner does binary joins only.
 - Filter pushdown is not implemented — `where_` re-associates within a chain
   but is not pushed through `meet` or `fork`.

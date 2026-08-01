@@ -31,6 +31,7 @@ Five layers, bottom to top:
 | 2 | the algebra | `lib/algebra.ml` — semigroupoid → category → allegory → union → division → Kleene, plus products and the scalar language. The ladder starts below the category because [the identity is where the subject divides](./NOTES.md#what-this-changed) |
 | 3 | interpreters | `lib/eval.ml`, `lib/symbolic.ml`, `lib/incr.ml` |
 | 4 | planning | `lib/plan.ml` |
+| 5 | the surface, with points | `lib/query.ml` — variables and binding operators that compile *to* the algebra |
 
 and `lib/laws.ml`, which is the algebra's equational laws as a functor any
 backend can run against itself.
@@ -46,6 +47,34 @@ end
 module E = Reachable_in_three (Eval)     (* run it now                    *)
 module S = Reachable_in_three (Symbolic) (* print it, plan it, rewrite it *)
 module I = Reachable_in_three (Incr)     (* keep it live                  *)
+```
+
+The surface restores the variables without giving anything up: a query written
+with binding operators compiles to a term in the algebra, so the planner, the
+fusion rewrite and every interpreter still apply.
+
+```ocaml
+let reachable_dept =
+  Query.compile (fun boss ->
+    let open Query in
+    let* report = step manages boss in
+    let* d = step dept report in
+    ret d)
+(* compiles to ((id >> «4») >> «4»), planned to («4» >> «4») *)
+```
+
+Writing a *cycle* is what makes this more than sugar — it produces exactly the
+shape the planner learned to fuse:
+
+```ocaml
+let triangles =
+  Query.compile (fun x ->
+    let open Query in
+    let* y = step edges x in
+    let* z = step edges y in
+    let* () = constrain edges x z in   (* closes the cycle *)
+    ret z)
+(* compiles to (((id >> «5») >> «5») ∧ «5»), planned to ((«5» ⋈ «5») ∧ «5») *)
 ```
 
 Filtering needs no combinator of its own — it is composition with a

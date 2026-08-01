@@ -721,6 +721,89 @@ let triangle_gap () =
     (Relation.equal (Symbolic.run S2.q) (Symbolic.run planned2))
 
 (* ------------------------------------------------------------------ *)
+(* Layer 4: the surface with points                                    *)
+(* ------------------------------------------------------------------ *)
+
+let test_query_surface () =
+  section "Layer 4: queries with variables, compiled to the algebra";
+  let manages =
+    Relation.of_list [ ("alice", "bob"); ("alice", "carol"); ("bob", "dave"); ("carol", "erin") ]
+  in
+  let dept =
+    Relation.of_list
+      [ ("bob", "eng"); ("carol", "sales"); ("dave", "eng"); ("erin", "sales") ]
+  in
+
+  (* A chain. Reads pointfully, compiles to a composition. *)
+  let chain =
+    Query.compile (fun boss ->
+      let open Query in
+      let* report = step manages boss in
+      let* d = step dept report in
+      ret d)
+  in
+  printf "   chain compiles to  : %s\n" (Symbolic.to_string chain);
+  (* The whole relation, not just one row: a query denotes a relation, and
+     asking about one boss is composing with a coreflexive, not a different
+     query. *)
+  check "the chain query gives the right answer"
+    (Poly.equal
+       [ ("alice", "eng"); ("alice", "sales"); ("bob", "eng"); ("carol", "sales") ]
+       (Relation.to_list (Symbolic.run chain)));
+  check "and it is a plain composition, so the planner applies"
+    (String.is_substring (Symbolic.to_string chain) ~substring:">>");
+
+  (* Traversing backwards: who manages someone in engineering? *)
+  let backwards =
+    Query.compile (fun d ->
+      let open Query in
+      let* person = back dept d in
+      let* boss = back manages person in
+      ret boss)
+  in
+  check "a backwards step is a converse, not a second index"
+    (Poly.equal
+       [ ("eng", "alice"); ("eng", "bob"); ("sales", "alice"); ("sales", "carol") ]
+       (Relation.to_list (Symbolic.run backwards)));
+
+  (* A cycle, which is the case worth having: the surface produces exactly the
+     meet-of-a-composition that the fusion rewrite handles. *)
+  let edges = Relation.of_list [ (0, 1); (1, 2); (0, 2); (2, 3); (1, 3) ] in
+  let triangle =
+    Query.compile (fun x ->
+      let open Query in
+      let* y = step edges x in
+      let* z = step edges y in
+      let* () = constrain edges x z in
+      ret z)
+  in
+  printf "   cycle compiles to  : %s\n" (Symbolic.to_string triangle);
+  printf "   and is planned as  : %s\n" (Symbolic.to_string (Plan.optimise triangle));
+  check "the cycle query compiles to a meet of a composition"
+    (String.is_substring (Symbolic.to_string triangle) ~substring:"\226\136\167");
+  check "which the planner then fuses"
+    (String.is_substring (Symbolic.to_string (Plan.optimise triangle)) ~substring:"\226\139\136");
+  check "and the fused plan agrees with the unfused one"
+    (Relation.equal (Symbolic.run triangle) (Symbolic.run (Plan.optimise triangle)));
+  check "the triangles are the right ones"
+    (Poly.equal [ (0, 2); (1, 3) ] (Relation.to_list (Symbolic.run triangle)));
+
+  (* And the fragment boundary is loud rather than silently wrong. *)
+  let unsupported =
+    match
+      Query.compile (fun x ->
+        let open Query in
+        let* y = step manages x in
+        let* _z = step manages y in
+        let* w = step dept y in
+        ret w)
+    with
+    | _ -> false
+    | exception Query.Unsupported _ -> true
+  in
+  check "a shape outside the fragment raises rather than guessing" unsupported
+
+(* ------------------------------------------------------------------ *)
 
 let () =
   test_laws ();
@@ -735,5 +818,6 @@ let () =
   test_estimate_is_calibrated ();
   test_estimator_quality ();
   triangle_gap ();
+  test_query_surface ();
   printf "\n%d checks, %d failures\n" !checks !failures;
   if !failures > 0 then exit 1
