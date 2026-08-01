@@ -724,6 +724,23 @@ let triangle_gap () =
 (* Layer 4: the surface with points                                    *)
 (* ------------------------------------------------------------------ *)
 
+(* An inclusion law is worth nothing if it is secretly an equality. Oliveira's
+   ×-fusion is an equality for functions; the claim that only one inclusion
+   survives for relations needs a witness. *)
+let test_fork_fusion_is_strict () =
+  section "×-fusion is a strict inclusion for relations, not an equality";
+  let c = Eval.of_list [ (0, 1); (0, 2) ] in
+  let a = Eval.of_list [ (1, 10) ] in
+  let b = Eval.of_list [ (2, 20) ] in
+  let lhs = Eval.(c >> fork a b) in
+  let rhs = Eval.(fork (c >> a) (c >> b)) in
+  printf "   c >> ⟨a, b⟩        = %d pairs\n" (List.length (Eval.to_list lhs));
+  printf "   ⟨c >> a, c >> b⟩   = %d pairs\n" (List.length (Eval.to_list rhs));
+  check "the inclusion holds" (Eval.subset lhs rhs);
+  check "and is strict: the two sides genuinely differ" (not (Eval.equal lhs rhs));
+  printf "   => the right-hand fork uses a different c-witness per branch;\n";
+  printf "      the left-hand one cannot. That is Rel failing to be cartesian.\n"
+
 let test_query_surface () =
   section "Layer 4: queries with variables, compiled to the algebra";
   let manages =
@@ -818,6 +835,7 @@ let () =
   test_estimate_is_calibrated ();
   test_estimator_quality ();
   triangle_gap ();
+  test_fork_fusion_is_strict ();
   test_query_surface ();
   printf "\n%d checks, %d failures\n" !checks !failures;
   if !failures > 0 then exit 1

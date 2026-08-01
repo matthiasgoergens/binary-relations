@@ -379,6 +379,36 @@ Generic Join or Leapfrog Triejoin over the sorted pair sets would cover the
 general case, and Free Join is the more recent framing of how to combine that
 with the binary planner rather than bolting it alongside.
 
+## Prior art: Oliveira, products and coreflexives
+
+Reading queue item 3, and unlike the Kahl episode this one was done *before*
+building the next thing on top of `fork`. It produced three laws the suite did
+not have, all of which pass — which is the useful outcome for a check on
+existing code.
+
+- **`Φq · Φp = Φq ∩ Φp`** (5.227): for coreflexives, composition and meet
+  coincide. Worth having because `Eval` reaches the two through entirely
+  separate code paths — `>>` conjoins the predicates, `meet` intersects — and
+  nothing in the implementation forces them to agree. Now `Laws` does.
+- **(5.225)/(5.226)**: a coreflexive on the left restricts inputs, on the right
+  restricts outputs. Exactly `filter_dom` and `filter_rng`; the idempotence
+  that follows is now checked.
+- **×-fusion** (2.26), `⟨f, g⟩ · h = ⟨f · h, g · h⟩`. For functions this is an
+  equality. For relations only one inclusion survives, and the suite now both
+  asserts the inclusion and **exhibits a witness that it is strict**:
+
+  ```
+  c = {(0,1), (0,2)}   a = {(1,10)}   b = {(2,20)}
+  c >> ⟨a, b⟩      = 0 pairs
+  ⟨c >> a, c >> b⟩ = 1 pair
+  ```
+
+  The right-hand fork may use a different `c`-witness in each branch; the
+  left-hand one must use the same. That is the non-cartesianness of Rel — until
+  now a line in the ruled-out list — turned into a failing equality with a
+  concrete counterexample. It is also why `fork-fst-restricted` needs its domain
+  guard.
+
 ## Prior art: Kahl's relational semigroupoids
 
 The brief lists this as reading priority 2 — "someone built this interface once

@@ -64,6 +64,19 @@ module Make (R : Algebra.EQ_RELATIONS) = struct
       ("coreflexive-self-converse", fun { a; _ } ->
         let co = meet id a in
         eq (converse co) co);
+      (* Oliveira, {e Program Design by Calculation}, (5.227): for
+         coreflexives, composition and meet coincide. Worth having as a check
+         because {!Eval} reaches the two through completely separate code
+         paths — [>>] conjoins the predicates, [meet] intersects — and nothing
+         else forces them to agree. *)
+      ("coreflexive-compose-is-meet", fun { a; b; _ } ->
+        let c1 = meet id a and c2 = meet id b in
+        eq (c1 >> c2) (meet c1 c2));
+      (* (5.225)/(5.226): a coreflexive on the left restricts inputs, on the
+         right restricts outputs. Stated here as the idempotence that follows. *)
+      ("coreflexive-idempotent", fun { a; _ } ->
+        let c = meet id a in
+        eq (c >> c) c);
     ]
 
   let union_allegory =
@@ -162,6 +175,14 @@ module Make (R : Algebra.EQ_RELATIONS) = struct
       ("fork-snd-included", fun { a; b; _ } -> sub (fork a b >> snd_) b);
       ("fork-diagonal", fun { a; _ } -> eq (fork a a >> fst_) (fork a a >> snd_));
       ("fork-bot", fun { a; _ } -> eq (fork a bot) bot);
+      (* ×-fusion, Oliveira (2.26): ⟨f, g⟩ · h = ⟨f · h, g · h⟩ — in
+         diagrammatic order, [h >> fork f g = fork (h >> f) (h >> g)].
+         For {e functions} that is an equality. For relations only one
+         inclusion survives, because the fork on the right may use a different
+         [h]-witness in each branch while the one on the left must use the
+         same. That gap is the non-cartesianness of Rel showing up in a law
+         rather than in prose. *)
+      ("fork-fusion-inclusion", fun { a; b; c } -> sub (c >> fork a b) (fork (c >> a) (c >> b)));
     ]
 
   let all : law list =
