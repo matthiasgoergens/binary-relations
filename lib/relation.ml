@@ -212,6 +212,27 @@ let rdiv x y =
       if Set.is_subset needed ~of_:has then Set.add acc (a, b) else acc))
   |> of_pairs
 
+(* [(x >> y) ∧ z] without ever building [x >> y].
+
+   For each pair [(u, w)] of the meet's other side, ask whether any [v] joins
+   it: is [x(u)] disjoint from [y⁻¹(w)]? That is a set intersection against two
+   indexes rather than a materialised composition, and it is the leapfrog step
+   of a worst-case-optimal join specialised to the triangle. The output is
+   bounded by [z], so the intermediate blow-up disappears entirely. *)
+let meet_compose x y z =
+  if x.card_ = 0 || y.card_ = 0 || z.card_ = 0 then empty
+  else begin
+    let xf = fwd x and yb = bwd y in
+    touch z.card_;
+    of_pairs
+      (Set.fold (pairs z) ~init:Set.Poly.empty ~f:(fun acc (u, w) ->
+         match (Map.find xf u, Map.find yb w) with
+         | Some from_u, Some into_w ->
+           touch (Int.min (Set.length from_u) (Set.length into_w));
+           if Set.is_empty (Set.inter from_u into_w) then acc else Set.add acc (u, w)
+         | _ -> acc))
+  end
+
 let delta ~from ~to_ =
   let added = ref Set.Poly.empty and removed = ref Set.Poly.empty in
   Sequence.iter (Set.symmetric_diff (pairs from) (pairs to_)) ~f:(function

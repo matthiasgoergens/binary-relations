@@ -100,6 +100,10 @@ module Impl = struct
     | Fn : ('a -> 'b) -> ('a, 'b) t
     | Group : ('a, 'b) t -> ('a, 'b list) t
     | Leaf : ('a, 'b) Relation.t -> ('a, 'b) t
+    | MeetComp : ('a, 'b) t * ('b, 'c) t * ('a, 'c) t -> ('a, 'c) t
+        (** [(x >> y) ∧ z], fused. Introduced by {!Rel.Plan}, never written by
+            hand: it exists so the planner can express a rewrite the surface
+            algebra has no way to say. *)
 
   let id = Id
   let bot = Bot
@@ -171,6 +175,8 @@ let rec to_string : type a b. (a, b) t -> string = function
   | Fn _ -> "fn"
   | Group x -> Printf.sprintf "group(%s)" (to_string x)
   | Leaf r -> Printf.sprintf "«%d»" (Relation.card r)
+  | MeetComp (x, y, z) ->
+    Printf.sprintf "((%s ⋈ %s) ∧ %s)" (to_string x) (to_string y) (to_string z)
 
 (** {2 Interpretation}
 
@@ -195,6 +201,7 @@ let rec to_eval : type a b. (a, b) t -> (a, b) Eval.t = function
   | Fn f -> Eval.fn f
   | Group x -> Eval.group (to_eval x)
   | Leaf r -> Eval.of_relation r
+  | MeetComp (x, y, z) -> Eval.meet_compose (to_eval x) (to_eval y) (to_eval z)
 
 let run t = Eval.to_relation (to_eval t)
 
@@ -213,3 +220,4 @@ let rec has_opaque : type a b. (a, b) t -> bool = function
   | Fork (x, y) -> has_opaque x || has_opaque y
   | Rdiv (x, y) -> has_opaque x || has_opaque y
   | Ldiv (x, y) -> has_opaque x || has_opaque y
+  | MeetComp (x, y, z) -> has_opaque x || has_opaque y || has_opaque z

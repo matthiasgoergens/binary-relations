@@ -135,6 +135,25 @@ val rdiv : ('a, 'c) t -> ('b, 'c) t -> ('a, 'b) t
     [(Q /● S) b c = (∀ a → Q a b → S a c) × ∃ (λ a → Q a b)]. See {!Rel.Algebra}
     and [NOTES.md]. *)
 
+val meet_compose : ('a, 'b) t -> ('b, 'c) t -> ('a, 'c) t -> ('a, 'c) t
+(** [meet_compose x y z] is [(x >> y) ∧ z], computed without materialising
+    [x >> y].
+
+    This is the one shape where re-association cannot help: a two-relation
+    composition has only one bracketing, so a cost-based planner has nothing to
+    choose, and the whole cost is in building an intermediate that the meet then
+    mostly discards. Meeting a composite with a base relation is also the only
+    everyday way to write a {e cyclic} query in this algebra — it is the
+    triangle — and cyclic queries are precisely where worst-case-optimal joins
+    beat binary ones. On acyclic queries they do not: a WCO plan is equivalent
+    to a left-deep binary plan, which is worse than the bushy ones {!Rel.Plan}
+    already finds.
+
+    So this is deliberately not a general WCO join engine. It is the leapfrog
+    step of one, specialised to the shape that needs it, which is the direction
+    Free Join (Wang, Willsey and Suciu, SIGMOD 2023) argues for: start from a
+    good binary plan and fuse where it pays. *)
+
 (** {2 Incremental support} *)
 
 val delta : from:('a, 'b) t -> to_:('a, 'b) t -> ('a, 'b) t * ('a, 'b) t

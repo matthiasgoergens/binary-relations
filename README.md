@@ -71,6 +71,7 @@ comment. Numbers are tuples touched, from `Relation.tuples_touched`.
 | maintaining a view beats recomputing it | 4 vs 3 004 on a one-tuple insert (751×) |
 | an unchanged sibling subtree is not recomputed | 2 tuples in the steady state |
 | the scalar language covers ordinary business predicates | 10 of 14; 4 need the escape hatch |
+| fusing a meet into a composition, skewed triangle | 251 539 vs 2 050 tuples (122.7×) |
 
 Two of those are the ones whose failure mode is a wrong answer rather than a
 slow one, so they are attacked rather than demonstrated: 400 randomly generated

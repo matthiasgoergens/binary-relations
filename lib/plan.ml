@@ -82,6 +82,7 @@ let rec simplify : type a b. (a, b) Symbolic.t -> (a, b) Symbolic.t =
   | Fork (x, y) -> Fork (simplify x, simplify y)
   | Rdiv (x, y) -> Rdiv (simplify x, simplify y)
   | Ldiv (x, y) -> Ldiv (simplify x, simplify y)
+  | MeetComp (x, y, z) -> MeetComp (simplify x, simplify y, simplify z)
   | Id | Bot | Fst | Snd | Where _ | Fn _ | Leaf _ -> t
 
 (* ------------------------------------------------------------------ *)
@@ -255,9 +256,8 @@ let rec reassociate : type a b. (a, b) Symbolic.t -> (a, b) Symbolic.t =
   | Plus x -> Plus (reassociate x)
   | Star x -> Star (reassociate x)
   | Group x -> Group (reassociate x)
+  | MeetComp (x, y, z) -> MeetComp (reassociate x, reassociate y, reassociate z)
   | Id | Bot | Fst | Snd | Where _ | Fn _ | Leaf _ -> t
-
-let optimise t = reassociate (simplify t)
 
 (** The estimated cost of a tree as written, in tuples touched. Composition
     chains are costed left-to-right unless they have been planned. *)
@@ -273,6 +273,12 @@ let rec estimate : type a b. (a, b) Symbolic.t -> info option * float =
   | Conv x ->
     let i, c = estimate x in
     (Option.map i ~f:(fun i -> { i with dom = i.rng; rng = i.dom }), c)
+  | MeetComp (x, y, z) ->
+    (* The result is a subset of [z], and the work is one probe per pair of
+       [z] rather than a materialised composition. *)
+    let _, cx = estimate x and _, cy = estimate y in
+    let iz, cz = estimate z in
+    (iz, cx +. cy +. cz +. (match iz with Some i -> i.card | None -> 0.))
   | Meet (x, y) | Join (x, y) ->
     let ix, cx = estimate x and iy, cy = estimate y in
     let i =
@@ -285,6 +291,44 @@ let rec estimate : type a b. (a, b) Symbolic.t -> info option * float =
   | _ -> (None, 0.0)
 
 let estimated_cost t = snd (estimate t)
+
+(* ------------------------------------------------------------------ *)
+(* Fusing a meet into a composition                                     *)
+(* ------------------------------------------------------------------ *)
+
+(* [(x >> y) ∧ z] can be evaluated without building [x >> y], by probing for
+   each pair of [z]. That is a win exactly when [z] is smaller than the
+   intermediate it would otherwise discard — and a loss when it is not, so the
+   rewrite is guarded rather than unconditional.
+
+   Note what the guard asks of the cost model, which is much less than a
+   cardinality prediction: it compares one estimate against one {e exact} leaf
+   count and only needs the ordering to be right. That is a far weaker demand
+   than the absolute estimates the withdrawn M5 argument leaned on. *)
+let fuse_meet p q z =
+  match (fst (estimate (Comp (p, q))), fst (estimate z)) with
+  | Some ipq, Some iz when Float.( <= ) iz.card ipq.card -> MeetComp (p, q, z)
+  | _ -> Meet (Comp (p, q), z)
+
+let rec fuse : type a b. (a, b) Symbolic.t -> (a, b) Symbolic.t =
+ fun t ->
+  match t with
+  | Meet (Comp (p, q), z) -> fuse_meet (fuse p) (fuse q) (fuse z)
+  | Meet (z, Comp (p, q)) -> fuse_meet (fuse p) (fuse q) (fuse z)
+  | Meet (x, y) -> Meet (fuse x, fuse y)
+  | Comp (x, y) -> Comp (fuse x, fuse y)
+  | Join (x, y) -> Join (fuse x, fuse y)
+  | Fork (x, y) -> Fork (fuse x, fuse y)
+  | Rdiv (x, y) -> Rdiv (fuse x, fuse y)
+  | Ldiv (x, y) -> Ldiv (fuse x, fuse y)
+  | Conv x -> Conv (fuse x)
+  | Plus x -> Plus (fuse x)
+  | Star x -> Star (fuse x)
+  | Group x -> Group (fuse x)
+  | MeetComp (x, y, z) -> MeetComp (fuse x, fuse y, fuse z)
+  | Id | Bot | Fst | Snd | Where _ | Fn _ | Leaf _ -> t
+
+let optimise t = reassociate (fuse (simplify t))
 
 (** Where the cost model cannot see. Each of these is a place the planner
     refuses to reorder across, and knowing they are there is the difference
@@ -309,6 +353,7 @@ let blind_spots : type a b. (a, b) Symbolic.t -> string list =
     | Fork (x, y) -> go x; go y
     | Rdiv (x, y) -> go x; go y
     | Ldiv (x, y) -> go x; go y
+    | MeetComp (x, y, z) -> go x; go y; go z
   in
   go t;
   List.rev !acc

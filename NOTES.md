@@ -314,6 +314,71 @@ limitation with a measurement attached rather than a claim. Replacing the DP
 with a worst-case-optimal join is the next substantial piece of work on this
 layer, and it is now the brief's stated M5.
 
+## M5, second attempt: the prior art says do not replace the planner
+
+The brief's revised M5 is "worst-case-optimal joins plus adaptive execution,
+not a cost model over statistics". Searching the literature *while* starting on
+it — the parallel rule, applied for once — changed the plan before any of it
+was built.
+
+**WCOJ is not a general improvement, and on this library's commonest query
+shape it is a regression.** The Free Join authors say it plainly: WCOJ
+algorithms "have been found to be less efficient than traditional binary join
+plans on the typical acyclic queries found in practice", and on acyclic queries
+a WCO plan is equivalent to a *left-deep* binary plan — worse than the *bushy*
+plans the interval DP already produces. Yannakakis (1981) has given O(N + OUT)
+for acyclic queries, by a series of pairwise joins, since before any of this.
+
+A composition chain is a path, hence acyclic. So "replace the DP with WCOJ"
+would have made the common case slower.
+
+**Where a cycle actually comes from here.** This algebra has one everyday way
+to write one: meet a composite with a base relation. `meet (a >> b) c` over a
+common carrier is the triangle query. That is also the one shape where
+re-association is powerless — a two-relation composition has a single
+bracketing, so the DP has nothing to choose — and the whole cost sits in
+materialising an intermediate the meet then discards.
+
+**So the fix is to fuse, not to replace.** `Relation.meet_compose` computes
+`(x >> y) ∧ z` without building `x >> y`: for each pair of `z`, ask whether
+`x(u)` and `y⁻¹(w)` intersect. That is the leapfrog step of a
+worst-case-optimal join, specialised to the shape that needs it, and it is the
+direction Free Join argues for — start from a good binary plan and fuse where
+it pays. `Plan` introduces it under a guard.
+
+### Measured
+
+| triangle over | edges | intermediate | output | tuples touched | |
+|---|---|---|---|---|---|
+| uniform random graph | 1 963 | 15 581 | 846 | 21 232 → 19 550 | 1.1× |
+| one high-degree hub | 1 010 | 250 021 | 30 | 251 539 → 2 050 | **122.7×** |
+
+**The win is under skew, and on uniform data there is essentially none.** That
+is the same boundary the cardinality estimator failed at, in the same session:
+uniform data hides both problems. It is worth stating as a general caution
+about this library's benchmarks — a randomly generated regular graph is the
+input least likely to reveal anything.
+
+### The guard, and what it asks of the estimator
+
+Fusing is a *loss* when the meet's other side is the larger one, so the rewrite
+is conditional: fuse only when `z` is no bigger than the estimated size of
+`x >> y`. Note how much weaker a demand this places on the cost model than the
+withdrawn M5 argument did — it compares one estimate against one exact leaf
+count and only needs the *ordering* to be right, not the magnitude. Given that
+the estimator is an order of magnitude out under skew in both directions, a
+rewrite that needed its absolute numbers would not be trustworthy; one that
+needs a comparison is. Tested: on `meet (small >> small) big` the planner
+declines to fuse.
+
+### Still not done
+
+This is not a WCO join engine. It handles one cyclic pattern; a query with a
+longer cycle, or a cyclic pattern built through `fork`, still materialises.
+Generic Join or Leapfrog Triejoin over the sorted pair sets would cover the
+general case, and Free Join is the more recent framing of how to combine that
+with the binary planner rather than bolting it alongside.
+
 ## Prior art: Kahl's relational semigroupoids
 
 The brief lists this as reading priority 2 — "someone built this interface once

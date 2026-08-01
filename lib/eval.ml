@@ -222,6 +222,15 @@ module Impl = struct
   let ldiv : type a b c. (a, b) t -> (a, c) t -> (b, c) t =
    fun x y -> converse (rdiv (converse y) (converse x))
 
+  (* Fused [(x >> y) ∧ z]. Only the all-finite case can be fused; anything
+     else falls back to the ordinary meaning, which keeps this a pure
+     optimisation with no new partiality. *)
+  let meet_compose : type a b c. (a, b) t -> (b, c) t -> (a, c) t -> (a, c) t =
+   fun x y z ->
+    match (x, y, z) with
+    | Fin a, Fin b, Fin c -> Fin (Relation.meet_compose a b c)
+    | _ -> meet (x >> y) z
+
   let equal : type a b. (a, b) t -> (a, b) t -> bool =
    fun x y ->
     match (x, y) with

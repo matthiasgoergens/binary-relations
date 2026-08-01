@@ -642,6 +642,85 @@ let test_estimator_quality () =
   printf "   => exact leaf statistics do not give exact join estimates; see NOTES.md\n"
 
 (* ------------------------------------------------------------------ *)
+(* Where a cycle appears, and what it costs                            *)
+(* ------------------------------------------------------------------ *)
+
+(* A composition chain is a path: acyclic, and the literature is clear that
+   worst-case-optimal joins buy nothing there — on acyclic queries WCO plans
+   are equivalent to LEFT-DEEP binary plans, which are worse than the bushy
+   ones the interval DP already produces.
+
+   A cycle needs a query that closes back on itself, and this algebra has
+   exactly one everyday way to write one: meet a composite with a base
+   relation. [meet (a >> b) c] over the same carrier is the triangle query. *)
+let triangle_on ~name ~edges ~expect_fusion =
+  let a = Relation.of_list edges in
+  let module Q (R : Algebra.RELATIONS) = struct
+    open R
+
+    let tri = meet (of_relation a >> of_relation a) (of_relation a)
+  end in
+  let module S = Q (Symbolic) in
+  ignore (Relation.stats a : Relation.stats);
+  Relation.reset_counters ();
+  let out = Symbolic.run S.tri in
+  let plain = Relation.tuples_touched () in
+  let intermediate = Relation.card (Relation.compose a a) in
+  let planned = Plan.optimise S.tri in
+  let fused = String.is_substring (Symbolic.to_string planned) ~substring:"⋈" in
+  Relation.reset_counters ();
+  let out2 = Symbolic.run planned in
+  let after = Relation.tuples_touched () in
+  printf "   %-22s edges %5d  intermediate %7d  output %5d  |  %6d -> %6d tuples (%.1fx)%s\n"
+    name (Relation.card a) intermediate (Relation.card out) plain after
+    (Float.of_int plain /. Float.of_int (Int.max 1 after))
+    (if fused then "" else "  [not fused]");
+  check (name ^ ": fusing preserves the answer") (Relation.equal out out2);
+  check (name ^ ": fusion decision as expected") (Bool.equal fused expect_fusion);
+  (plain, after)
+
+let triangle_gap () =
+  section "The one shape re-association cannot help: a triangle";
+  let rng = Random.State.make [| 7 |] in
+  let nodes = 200 and degree = 10 in
+  let uniform =
+    List.concat_map (List.init nodes ~f:Fn.id) ~f:(fun x ->
+      List.init degree ~f:(fun _ -> (x, Random.State.int rng nodes)))
+  in
+  (* A hub: one node with high in- and out-degree. The composition then
+     contains every (i, j) that reaches the hub and leaves it, which is
+     quadratic, while the triangles through it are not. *)
+  let h = 500 in
+  let hub =
+    List.init h ~f:(fun i -> (i + 1, 0))
+    @ List.init h ~f:(fun j -> (0, j + 1))
+    (* a handful of chords, so the query has real answers rather than being a
+       dramatic optimisation of the empty relation *)
+    @ List.init 10 ~f:(fun i -> (i + 1, i + 2))
+  in
+  let _ = triangle_on ~name:"uniform random graph" ~edges:uniform ~expect_fusion:true in
+  let plain, after = triangle_on ~name:"one high-degree hub" ~edges:hub ~expect_fusion:true in
+  check "fusion pays on the skewed graph" (after * 10 < plain);
+  printf "   => the win is under SKEW, not on uniform data \226\128\148 the same place the\n";
+  printf "      cardinality estimator failed. Uniform data hides both.\n";
+
+  (* The guard matters: fusing is a loss when the meet's other side is the big
+     one, so the planner must decline there. *)
+  let small = Relation.of_list [ (0, 1); (1, 2) ] in
+  let big = Relation.of_list (List.init 5000 ~f:(fun i -> (i % 50, i))) in
+  let module Q2 (R : Algebra.RELATIONS) = struct
+    open R
+
+    let q = meet (of_relation small >> of_relation small) (of_relation big)
+  end in
+  let module S2 = Q2 (Symbolic) in
+  let planned2 = Plan.optimise S2.q in
+  check "the planner declines to fuse when the other side is larger"
+    (not (String.is_substring (Symbolic.to_string planned2) ~substring:"\226\139\136"));
+  check "and that query is still right"
+    (Relation.equal (Symbolic.run S2.q) (Symbolic.run planned2))
+
+(* ------------------------------------------------------------------ *)
 
 let () =
   test_laws ();
@@ -655,5 +734,6 @@ let () =
   test_incremental_is_sound ();
   test_estimate_is_calibrated ();
   test_estimator_quality ();
+  triangle_gap ();
   printf "\n%d checks, %d failures\n" !checks !failures;
   if !failures > 0 then exit 1
