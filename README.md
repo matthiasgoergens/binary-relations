@@ -67,7 +67,7 @@ comment. Numbers are tuples touched, from `Relation.tuples_touched`.
 | an index is built once and never invalidated | 1 build for 100 lookups; the second direction is a second build |
 | converse does no index work | 0 additional builds over 100 lookups on the converse |
 | semi-naive closure beats the naive fixpoint | 900 vs 19 315 on a 30-link chain (21.5×) |
-| planning on exact statistics beats the order written | 4 vs 1 502 on a 500×500×1 chain (376×) |
+| re-association beats the order written | 4 vs 1 502 on a 500×500×1 chain (376×) |
 | maintaining a view beats recomputing it | 4 vs 3 004 on a one-tuple insert (751×) |
 | an unchanged sibling subtree is not recomputed | 2 tuples in the steady state |
 | the scalar language covers ordinary business predicates | 10 of 14; 4 need the escape hatch |
@@ -85,6 +85,14 @@ The planner's own statistics cost one index build per relation — exact and
 never stale is not the same as free, and
 [`NOTES.md`](./NOTES.md#the-planner-refuses-rather-than-guesses) records how
 the first version of that measurement was unfair and said the opposite.
+
+More importantly, **the argument M5 was built on has since been withdrawn.**
+Exact leaf statistics do not give good join estimates, because join cardinality
+depends on the correlation *between* relations: two of the measured cases have
+identical per-relation statistics and true results 100× apart. The
+re-association win above is real, the justification for it was not, and the
+brief now points at worst-case-optimal joins instead. See
+[`NOTES.md`](./NOTES.md#m5s-justification-was-withdrawn-and-the-measurement-agrees).
 
 ## Building
 

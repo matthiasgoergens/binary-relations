@@ -130,7 +130,9 @@ This is the operational form of the brief's point that an opaque predicate is a
 hole in the cost model rather than in the optimiser. The planner does not
 invent a selectivity constant; it declines to reorder and says why.
 
-**Statistics are exact and never stale, but they are not free.**
+**Statistics are exact and never stale, but they are not free — and being
+exact at the leaves turns out not to be the property that matters; see the M5
+section above.**
 `Relation.stats` forces both indexes, so planning a three-leaf chain cold costs
 six index builds. My first measurement charged that to the planned run only and
 concluded the plan was slower than the order written. The honest comparison
@@ -250,6 +252,67 @@ Two smaller findings, both fixable upstream and both recorded on the branch:
 on every call (47 lines for this suite) and whose `` `Silent `` alternative is
 not in the README's usage section; and the summary line disagrees with the
 result, printing `0 failing` on a run that returned a shrunk counterexample.
+
+## M5's justification was withdrawn, and the measurement agrees
+
+The brief's planner section originally argued that immutability hands a planner
+"perfect information for free", and M5 was built against that. The claim was
+withdrawn upstream on 2026-08-01 on three counts, and the correction reached
+this repo after the code did. Taking them in turn against what is actually
+here:
+
+**"Not free" — already found independently.** `Relation.stats` forces both
+indexes; planning a three-leaf chain cold costs six index builds. That is
+recorded above, and the first version of the planner measurement was unfair
+precisely because it charged that cost to one side only. Immutability buys
+*not stale*, not *cheap*. Conceded before the correction arrived.
+
+**"Wrong statistics anyway" — the serious one, and it lands.** Join cardinality
+depends on the correlation *between* two relations, not on any property of
+either, and exact leaf statistics say nothing about it. Rather than take that on
+authority it is now measured, in `test/main.ml`:
+
+| shape | predicted | actual | |
+|---|---|---|---|
+| uniform join keys | 10 000 | 10 000 | 1.00× |
+| skewed, hot keys aligned | 1 000 | 10 000 | **0.10×** |
+| skewed, hot keys disjoint | 1 000 | 100 | **10.00×** |
+
+The last two rows are the argument. Both right-hand relations have *identical*
+per-relation statistics — cardinality 100, domain size 1, range size 100 — so
+the cost model receives the same inputs in both cases and must return the same
+number. The true answers differ by a factor of a hundred. No amount of exactness
+at the leaves can close that gap, because the information needed is not in
+either relation. The estimator is not imprecise here; it is reading the wrong
+thing.
+
+**"Memoisation mostly does not apply."** True of this implementation: every
+derived relation is a fresh value, so the intermediates the interval DP most
+wants to cost are exactly the ones with no cached statistics. `Plan` estimates
+them with the textbook independence assumption, which is what the table above
+is measuring.
+
+### What this does and does not invalidate
+
+The *measurement* of the planner stands: on a 500×500×1 chain, execution touches
+1 502 tuples in the order written and 4 when planned. Re-association is a real
+win and the algebraic simplifications — pushing `converse` to the leaves, unit
+and absorbing elements — do not depend on estimates at all.
+
+What does not stand is the *justification*: "exact statistics make planning
+easier than in a real DBMS" is wrong, and a cost model over leaf statistics is
+the wrong long-term shape. The brief now points at **worst-case-optimal joins
+plus adaptive execution**, whose guarantees do not depend on estimate quality,
+with the argument that at in-memory app-state scale the measurement a real DBMS
+can only afford to estimate is affordable — so take it instead of guessing.
+
+`Plan` as it stands is therefore best read as: correct, useful for
+re-association and simplification, and resting on an estimator that is exact
+under uniformity and an order of magnitude out under skew — in *both*
+directions, so it cannot even be called conservative. That is a documented
+limitation with a measurement attached rather than a claim. Replacing the DP
+with a worst-case-optimal join is the next substantial piece of work on this
+layer, and it is now the brief's stated M5.
 
 ## Prior art: Kahl's relational semigroupoids
 

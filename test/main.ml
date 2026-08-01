@@ -583,6 +583,65 @@ let test_estimate_is_calibrated () =
     && Float.( < ) predicted (Float.of_int actual *. 10.))
 
 (* ------------------------------------------------------------------ *)
+(* Is the cost model's estimate actually any good?                     *)
+(* ------------------------------------------------------------------ *)
+
+(* The brief once claimed immutability hands a planner "perfect information for
+   free". Two thirds of that is now known to be wrong, and the second third is
+   a claim about THIS code: exact per-relation statistics say nothing about
+   JOIN cardinality, which depends on the correlation between two relations
+   rather than on any property of either. Leis et al. (VLDB 2015) found
+   estimators routinely off by orders of magnitude and that the cost model
+   matters far less than the estimates it is fed.
+
+   The one calibration check above used a single shape I chose myself, which by
+   this repo's own standard is close to no evidence. So: several shapes,
+   predicted output cardinality against the real thing. *)
+let estimator_error name x y =
+  let t = Symbolic.(of_relation x >> of_relation y) in
+  let predicted = match fst (Plan.estimate t) with Some i -> i.Plan.card | None -> Float.nan in
+  let actual = Float.of_int (Relation.card (Symbolic.run t)) in
+  let ratio = if Float.( = ) actual 0. then Float.nan else predicted /. actual in
+  printf "   %-34s predicted %7.0f  actual %7.0f  %5.2fx\n" name predicted actual ratio;
+  ratio
+
+let test_estimator_quality () =
+  section "How good is the join estimate? (uniform vs skewed)";
+
+  (* Uniform: every left element has the same fan-out, every join key the same
+     frequency. This is the assumption the textbook formula is built on. *)
+  let uniform_a = Relation.of_list (List.init 1000 ~f:(fun i -> (i, i % 10))) in
+  let uniform_b = Relation.of_list (List.init 100 ~f:(fun i -> (i % 10, i))) in
+  let r_uniform = estimator_error "uniform join keys" uniform_a uniform_b in
+
+  (* Skewed: one join key carries almost all the mass. Nothing in either
+     relation's own statistics — cardinality, distinct counts, fan-out — says
+     that the hot key on the left is the hot key on the right. That is the
+     correlation between them, and it is exactly what is not measured. *)
+  let skew_a =
+    Relation.of_list (List.init 100 ~f:(fun i -> (i, 0)) @ List.init 10 ~f:(fun i -> (100 + i, 100 + i)))
+  in
+  let skew_b = Relation.of_list (List.init 100 ~f:(fun j -> (0, j))) in
+  let r_skew = estimator_error "skewed, hot keys aligned" skew_a skew_b in
+
+  (* Same shapes and the same per-relation statistics as the skewed case, but
+     the hot keys do NOT meet. Identical inputs to the cost model, results two
+     orders of magnitude apart: the demonstration that the statistics are the
+     wrong ones, not merely imprecise. *)
+  let skew_b_miss = Relation.of_list (List.init 100 ~f:(fun j -> (100, j))) in
+  let r_miss = estimator_error "skewed, hot keys disjoint" skew_a skew_b_miss in
+
+  printf "   the two skewed rows have identical per-relation stats: card %d/%d, dom %d/%d, rng %d/%d\n"
+    (Relation.card skew_b) (Relation.card skew_b_miss)
+    (Relation.stats skew_b).domain_size (Relation.stats skew_b_miss).domain_size
+    (Relation.stats skew_b).range_size (Relation.stats skew_b_miss).range_size;
+  check "the estimate is good when the uniformity assumption holds"
+    (Float.( > ) r_uniform 0.5 && Float.( < ) r_uniform 2.0);
+  check "and it is wrong under skew, in both directions"
+    (Float.( < ) r_skew 0.5 || Float.( > ) r_miss 2.0);
+  printf "   => exact leaf statistics do not give exact join estimates; see NOTES.md\n"
+
+(* ------------------------------------------------------------------ *)
 
 let () =
   test_laws ();
@@ -595,5 +654,6 @@ let () =
   test_optimiser_is_sound ();
   test_incremental_is_sound ();
   test_estimate_is_calibrated ();
+  test_estimator_quality ();
   printf "\n%d checks, %d failures\n" !checks !failures;
   if !failures > 0 then exit 1

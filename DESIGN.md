@@ -1,6 +1,10 @@
 # Relations as first-class values — project brief
 
-**This is the brief as handed off, kept as written.** It is the record of what
+**This is the brief, kept as written except where it has been corrected.** The
+planner section and M5 were rewritten on 2026-08-01 after the "perfect
+information for free" claim was withdrawn; the implementation was already
+built against the old version, and [`NOTES.md`](./NOTES.md) records what that
+means and what was measured. It is the record of what
 was decided before any code existed, and it is deliberately not edited to match
 what the code turned out to be — where implementation contradicted it, that is
 recorded in [`NOTES.md`](./NOTES.md) with the reason, which is more useful than
@@ -144,7 +148,8 @@ Notes on the sketch:
   Codd cannot express, and the confirmed business-logic case (org charts,
   bill-of-materials, reachability).
 - **M4 — `Incr` interpreter.** Spike 7. The pitch rests on this.
-- **M5 — `Symbolic` + a planner.** See below.
+- **M5 — `Symbolic` + join planning.** Worst-case-optimal joins and adaptive
+  execution, *not* a statistics-driven cost model. See below.
 
 M0–M3 are a working library. M4 is the demo. M5 is the differentiator.
 
@@ -153,20 +158,45 @@ M0–M3 are a working library. M4 is the demo. M5 is the differentiator.
 ## The planner — why it is tractable here
 
 DataScript has no query planner: joins are hash joins folded over the clauses
-**in the order written**. Matthias's read is "probably fixable", and it is —
-with one advantage worth stating, because it inverts the usual difficulty:
+**in the order written**. Matthias's read is "probably fixable" and it is — but
+**not for the reason first given here.** The earlier draft of this section
+claimed immutability hands the planner "perfect information for free". Matthias
+called it silly; he is right, on three counts:
 
-> **Immutability makes planning easier than in a real DBMS.** Statistics —
-> cardinality, per-index distributions, distinct counts — are *pure functions of
-> an immutable value*. They can be computed once, memoised on the relation, and
-> are **exact and never stale**. Real databases plan against sampled statistics
-> that drift; here the planner has perfect information for free.
+1. **Not free.** Exact statistics cost a full scan — O(n), the same order as
+   just running the query. Real databases sample *because* exact statistics are
+   expensive, not because they enjoy being wrong. Immutability makes statistics
+   **not stale**; it does not make them cheap.
+2. **Wrong statistics anyway.** The hard part of planning is *join* cardinality,
+   which is a function of the **correlation between** relations, not a property
+   of any one stored relation. Leis et al.,
+   *[How Good Are Query Optimizers, Really?](https://www.vldb.org/pvldb/vol9/p204-leis.pdf)*
+   (VLDB 2015), found that cardinality estimators routinely produce large errors
+   and — pointedly — that **the cost model matters much less than the
+   estimates**. Immutability gives exact numbers at the leaves and nothing at
+   the joins, which is where the problem lives.
+3. **Memoisation mostly does not apply.** Under immutability every derived
+   relation is a *fresh value with no cached statistics*. Only long-lived base
+   relations benefit; the intermediates a planner most wants to reason about are
+   exactly the ones minted a moment ago.
 
-So the M5 planner is a cost model over exact statistics, plus join ordering,
-plus (later) worst-case-optimal joins. The one thing that breaks it is `opaque`
-— an opaque host predicate is a hole in the cost model, not merely in the
-optimiser. That is the real reason to keep `v` expressive enough that `opaque`
-is rare.
+**What is actually true is modest:** compute-once-per-value, never invalidated.
+A real engineering convenience. Not a planning advantage.
+
+**What does make planning tractable here is scale and robustness, not
+estimation.** DataScript's ecosystem is evidence that this lives at app-state
+scale in memory, and at that size the right move is the one Leis et al. point
+at — do not lean on estimates:
+
+- **Worst-case-optimal joins** (Leapfrog Triejoin, Free Join) have guarantees
+  that do not depend on estimate quality at all.
+- **Adaptive execution**: start, count what actually came back, re-plan. In a
+  real DBMS estimation is a proxy for a measurement too expensive to take; in
+  memory at this scale, the measurement is affordable, so take it.
+
+So **M5 is WCOJ plus adaptive execution, not a cost model over statistics.**
+`opaque` still hurts — it is a hole in whatever cost reasoning exists — but that
+is now an argument for keeping `v` expressive, not an argument about statistics.
 
 ---
 
