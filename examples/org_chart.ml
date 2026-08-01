@@ -11,6 +11,7 @@
 
 open! Core
 open Rel
+module Incr = Rel_incr
 
 let reports_to =
   Relation.of_list

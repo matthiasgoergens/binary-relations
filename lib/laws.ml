@@ -18,7 +18,7 @@
     not [a] but [a] restricted to the domain of [b]. Writing the true law down
     is more useful than writing the expected one and marking it as failing. *)
 
-open! Core
+open! Base
 
 module Make (R : Algebra.EQ_RELATIONS) = struct
   open R

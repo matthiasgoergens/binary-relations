@@ -1,0 +1,12 @@
+opam-version: "2.0"
+synopsis: "Binary relations as first-class immutable values"
+maintainer: "Matthias Goergens <matthias.goergens@gmail.com>"
+authors: "Matthias Goergens"
+license: "MIT"
+depends: [
+  "ocaml" {>= "5.3.0"}
+  "dune" {>= "3.9"}
+  "base"
+  "sexplib0"
+]
+build: [["dune" "build" "-p" name "-j" jobs]]

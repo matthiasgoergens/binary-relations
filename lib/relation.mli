@@ -41,7 +41,7 @@
     case-insensitive strings; the escape hatch is to wrap the element in a type
     whose structural order {e is} the intended one. *)
 
-open! Core
+open! Base
 
 type ('a, 'b) t
 

@@ -38,6 +38,7 @@
     noise in the example code. *)
 
 open! Core
+open Rel
 module I = Incremental.Make ()
 
 let stabilize = I.stabilize

@@ -1,2 +1,2 @@
-(lang dune 3.0)
+(lang dune 3.9)
 (name rel)

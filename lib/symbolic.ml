@@ -25,7 +25,7 @@
     the signature is what the user's program is checked against, and nothing
     can construct a scalar term except through it. *)
 
-open! Core
+open! Base
 
 (* The universal type, by way of an exception constructor generated per call.
    Standard, and unlike [Obj.magic] it cannot be got wrong: a projection that

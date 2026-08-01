@@ -1,7 +1,8 @@
 (library
  (name rel)
- (libraries core incremental)
+ (public_name rel)
+ (libraries base sexplib0)
  (preprocess
-  (pps ppx_jane))
+  (pps ppx_sexp_conv))
  (flags
   (:standard -warn-error -a)))

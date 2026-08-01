@@ -1,4 +1,4 @@
-open! Core
+open! Base
 
 (* Instrumentation. Global rather than per-value because the questions it
    answers are about a whole evaluation ("was this index built twice?", "how
@@ -33,15 +33,15 @@ type ('a, 'b) t = {
   stats_ : stats Lazy.t;
 }
 
-let pairs r = force r.pairs_
+let pairs r = Lazy.force r.pairs_
 let card r = r.card_
 let is_empty r = r.card_ = 0
-let fwd r = force r.fwd_
-let bwd r = force r.bwd_
+let fwd r = Lazy.force r.fwd_
+let bwd r = Lazy.force r.bwd_
 let to_list r = Set.to_list (pairs r)
 
 let build_index ~key ~elt ps =
-  incr index_build_count;
+  Int.incr index_build_count;
   touch (Set.length ps);
   Set.fold ps ~init:Map.Poly.empty ~f:(fun acc p ->
     Map.update acc (key p) ~f:(function
@@ -69,12 +69,12 @@ let of_pairs ps =
       card_ = Set.length ps;
       fwd_ = lazy (build_index ~key:fst ~elt:snd ps);
       bwd_ = lazy (build_index ~key:snd ~elt:fst ps);
-      stats_ = lazy (index_stats (force r.fwd_) (force r.bwd_) (Set.length ps));
+      stats_ = lazy (index_stats (Lazy.force r.fwd_) (Lazy.force r.bwd_) (Set.length ps));
     }
   in
   r
 
-let stats r = force r.stats_
+let stats r = Lazy.force r.stats_
 
 (* Spelled out rather than [of_pairs Set.Poly.empty] so that it generalises:
    a function application would be caught by the value restriction and [empty]
@@ -93,8 +93,8 @@ let singleton a b = of_pairs (Set.Poly.singleton (a, b))
 
 let image r a = Option.value (Map.find (fwd r) a) ~default:Set.Poly.empty
 let preimage r b = Option.value (Map.find (bwd r) b) ~default:Set.Poly.empty
-let dom r = Map.key_set (fwd r)
-let rng r = Map.key_set (bwd r)
+let dom r = Set.Poly.of_list (Map.keys (fwd r))
+let rng r = Set.Poly.of_list (Map.keys (bwd r))
 let mem r a b = Set.mem (pairs r) (a, b)
 
 (* Converse does no index work: the forward index of [converse r] {e is} the

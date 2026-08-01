@@ -25,7 +25,7 @@
     give the unbounded value a finite carrier and it becomes an ordinary
     relation, at which point converse is free. *)
 
-open! Core
+open! Base
 
 exception Unbounded of string
 

@@ -1,6 +1,6 @@
-(test
- (name main)
- (libraries rel rel_incr core base_quickcheck)
+(library
+ (name rel_incr)
+ (libraries rel core incremental)
  (preprocess
   (pps ppx_jane))
  (flags

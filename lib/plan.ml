@@ -30,7 +30,7 @@
       not merely in the optimiser: the planner does not silently invent a
       number, it declines to reorder and says why. *)
 
-open! Core
+open! Base
 open Symbolic
 
 (* ------------------------------------------------------------------ *)

@@ -88,8 +88,10 @@ the first version of that measurement was unfair and said the opposite.
 
 ## Building
 
-Needs OCaml 5.3 with `core`, `incremental` and `base_quickcheck`. There is no
-hand-rolled anything: no bespoke tree, no bespoke test framework.
+`rel` itself needs only `base` and `sexplib0`. `Incremental` forces `Core`, so
+it lives in a separate `rel_incr` library; the tests additionally use
+`base_quickcheck`. There is no hand-rolled anything: no bespoke tree, no
+bespoke test framework.
 
 ```
 opam switch create . ocaml-base-compiler.5.3.0 --no-install
@@ -99,6 +101,16 @@ dune exec test/main.exe          # 96 checks, including 47 property-checked laws
 dune exec examples/org_chart.exe # closure, both directions, division, live updates
 dune exec examples/predicates.exe # spike 4: how big must the scalar language be?
 ```
+
+The laws run with `Base_quickcheck.Shrinker.atomic`, i.e. no shrinking. A
+branch, `tapecheck-shrinking`, swaps in
+[tapecheck](https://github.com/matthiasgoergens/tapecheck)'s choice-tape
+engine, which on the one law that genuinely failed during development reduces
+the counterexample from nine noisy pairs to `a=[] b=[] c=[(0,0)]` — the minimal
+one. It is a branch rather than the default because tapecheck is not yet
+installable and vendors its own `base_quickcheck`, which cannot share a dune
+scope with `Core`. See
+[`NOTES.md`](./NOTES.md#shrinking-what-tapecheck-buys-and-why-it-is-on-a-branch).
 
 ## Status
 

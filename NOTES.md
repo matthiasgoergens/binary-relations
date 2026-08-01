@@ -188,6 +188,69 @@ bracket and a chain disagree. That case is unreachable, but a planner that
 silently emitted a different plan from the one it costed would still be
 correct — and would make every measurement in this file a lie.
 
+## Shrinking: what tapecheck buys, and why it is on a branch
+
+The law suite runs `quickcheck_shrinker = Base_quickcheck.Shrinker.atomic`,
+which is no shrinking at all — `Shrinker.int`, `bool` and `char` are literally
+`atomic` in base_quickcheck, so a failing scalar is reported exactly as
+generated. The cost showed up on the one law that genuinely failed here: the
+counterexample came back unshrunk and the diagnosis was done by hand.
+
+[tapecheck](https://github.com/matthiasgoergens/tapecheck) fixes that, and the
+integration is **on the `tapecheck-shrinking` branch, deliberately not on
+`main`**. Measured on this project's own generators:
+
+| | `base_quickcheck` | tapecheck |
+|---|---|---|
+| a deliberately false law (composition commutes) | 24 pairs across all three inputs | `a=[(0,0)] b=[(0,5)] c=[]` — minimal |
+| the law that actually failed here (`rdiv` Galois) | `a` 3 pairs, `b=[]`, `c` 5 pairs with a duplicate | `a=[] b=[] c=[(0,0)]` |
+
+The second row is the one that matters: `a=[] b=[] c=[(0,0)]` is *exactly* the
+minimal counterexample derived by hand above, so the shrinker would have handed
+over the diagnosis — empty divisor, non-empty candidate — rather than leaving it
+to be reasoned out. On the false law it also eliminated `c`, which the property
+never mentions.
+
+**The API is genuinely drop-in.** `Base_quickcheck.Test.run` → `Tape_test.run`
+is a one-identifier change: same `(module S)`, same `~config`, same generators,
+and the declared `Shrinker.atomic` is accepted and ignored as advertised.
+
+**Why it is not on `main`.** tapecheck is not installable as an opam package —
+its libraries have no `public_name` and cannot until the `splittable_random`
+fork carrying `For_tape.attach` lands
+([janestreet/splittable_random#2](https://github.com/janestreet/splittable_random/pull/2)).
+So it has to be vendored, and it vendors its own `base_quickcheck` and
+`splittable_random` under those exact library names. Any dune target that also
+reaches the *installed* `base_quickcheck` then fails to resolve — and every
+user of `Core` reaches it, transitively through `base_bigstring` → `int_repr` →
+`base_quickcheck.ppx_quickcheck.runtime`. `(allow_overlapping_dependencies)`
+gets past dune's conflict check and the linker then rejects it outright, with
+duplicated `Base_quickcheck__Generator`, `Base_quickcheck__Test` and
+`Splittable_random`.
+
+That is a hard adoption blocker against exactly the audience tapecheck is for,
+and it is worth recording that it was confirmed from outside the project rather
+than inferred from its own tree. Carrying 512K of vendored Jane Street code in
+a repo that otherwise builds from `base` and `sexplib0` is not a trade worth
+making until the upstream fork lands; the branch keeps the work and the
+evidence alive until then.
+
+**What the attempt left behind on `main`, on its own merits.** Making `rel`
+Core-free was a precondition for the experiment and is an improvement
+regardless: `rel` now depends on `base` and `sexplib0` and nothing else,
+`Incremental` — which forces `Core` — is isolated behind a separate `rel_incr`
+library, and `rel` is a public, installable library. One trap found on the way
+is worth knowing: `ppx_jane` bundles `ppx_quickcheck`, whose *runtime* is
+`base_quickcheck`, so merely preprocessing a library with `ppx_jane` puts
+`base_quickcheck` in its link closure. Narrowing to `ppx_sexp_conv` removed a
+dependency that had nothing to do with the code.
+
+Two smaller findings, both fixable upstream and both recorded on the branch:
+`Tape_test.run`'s `?report` defaults to `` `Summary ``, which prints to stdout
+on every call (47 lines for this suite) and whose `` `Silent `` alternative is
+not in the README's usage section; and the summary line disagrees with the
+result, printing `0 failing` on a run that returned a shrunk counterexample.
+
 ## Spike results
 
 | # | spike | status |

@@ -1,6 +1,6 @@
 (executables
  (names predicates org_chart)
- (libraries rel core)
+ (libraries rel rel_incr core)
  (preprocess
   (pps ppx_jane))
  (flags

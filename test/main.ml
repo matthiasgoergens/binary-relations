@@ -1,5 +1,6 @@
 open! Core
 open Rel
+module Incr = Rel_incr
 
 (* A deliberately plain harness. The interesting content is in what is
    checked, and several of the checks below are measurements rather than
