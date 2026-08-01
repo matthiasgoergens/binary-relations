@@ -296,7 +296,7 @@ having read him:
 |---|---|
 | `top`, complement | excluded; not finite values |
 | `star` | `star_on_carrier` — reflexive on the carrier of the argument |
-| residual `rdiv` | finite-carrier residual over the domains it can see |
+| residual `rdiv` | finite-carrier residual — his *restricted residual*, see below |
 | the laws for the above | restated in the restricted form that survives, in `Laws` |
 
 The last row is the one I would have expected to be the novel part and is not.
@@ -345,15 +345,76 @@ rather than an omission.**
   never-stale statistics remains a distinct argument; it is now a distinct
   argument with a known neighbour rather than an unexamined one.
 
-### What was actually read
+### The constructions have names, and one of them is his
 
-The RelMiCS and JLAP abstracts, Kahl's publication list, and the RATH project
-overview. **The paper bodies are paywalled and were not read**, so the Haskell
-type-class definitions, the exact form of his finiteness-preserving variants,
-and his laws are unverified here. Anything above about *his* interface is from
-abstracts; anything about this library is from its code. Getting the JLAP
-version through a library would be worth an hour before making any public claim
-about how the two interfaces compare in detail.
+The paper bodies are closed — verified, not assumed: OpenAlex reports
+`oa_status: closed` for [doi:10.1016/j.jlap.2007.10.008](https://doi.org/10.1016/j.jlap.2007.10.008)
+and Unpaywall independently returns `is_oa: false`. But the content is not
+closed. Kahl's **RATH-Agda 2.2** is a freely downloadable literate Agda
+development of exactly these theories
+([`cas.mcmaster.ca/relmics/RATH-Agda/`](https://www.cas.mcmaster.ca/relmics/RATH-Agda/),
+~2.4 MB PDF, 44k lines of extracted text) and it is a later and more complete
+statement than either 2006 paper. Everything below is quoted from it.
+
+**The finite-carrier residual is a known construct called a *restricted
+residual*, and Kahl introduced it for precisely this reason.** RATH-Agda §15:
+
+> Restricted residuals were first introduced by Kahl (2008) in the context of
+> semigroupoids motivated by applications to finite relations between infinite
+> sets, **where the residuals of finite relations are not necessarily finite
+> again**. Restricted residuals restrict attention to the "interesting part" of
+> residuals and preserve finiteness in that context.
+
+That is the finding the property test produced here, arrived at from the other
+direction. His mechanism is to *add an existence statement*:
+
+```agda
+(Q /● S) b c = (∀ a → Q a b → S a c) × ∃ (λ a → Q a b)
+```
+
+`rdiv` does the same thing by ranging `a` over `dom x` and `b` over `dom y` —
+the universal condition, conjoined with existence witnesses. His
+`dom-/● : dom (S ●/ R) ⊑ dom S` is the law form of that restriction.
+
+**The two laws that replaced the false Galois connection are his two laws.**
+From the derived-law list for restricted residuals:
+
+| RATH-Agda | `Laws` in this repo |
+|---|---|
+| `/-universal′ : Q ⊑ S ●/ R → Q # R ⊑ S` | `rdiv-sound` |
+| `●/-cancel-inner : ran T ⊑ dom S → T ⊑ (T # S) ●/ S` | `rdiv-maximal-on-carrier` |
+
+Note the guard on the second: a range-in-domain containment, which is exactly
+the `dom_ a >> c >> dom_ b` restriction I wrote after the unrestricted law
+failed. Restricted residuals are defined in "ordered semigroupoids **with
+domain**" — a domain operator is a prerequisite, and `dom_` is that operator.
+
+**`plus` versus `star` is a structural distinction, not a workaround.**
+RATH-Agda separates `KleeneSemigroupoid` — "Kleene categories without
+identities … essentially a heterogeneous version of the *1-free Kleene
+algebras* of Kozen (1998)" — carrying `TransClosOp` with `_⁺` only, from
+`KleeneCategory`, which carries `starOp` and needs identities. Transitive
+closure lives in the identity-free world; the star does not. That is the same
+line this library found by noticing `plus` stays finite while `star` needs a
+carrier, and it means `star_on_carrier` is the concession and `plus` is not one.
+
+**No `top` anywhere.** Zero occurrences of a universal-relation constant in
+44k lines of the development, consistent with excluding it here.
+
+### What this changes
+
+Nothing in the code. It changes what the code should be *called* and what it
+should cite: `rdiv` is a restricted residual (Kahl 2008), the guarded law is
+his `●/-cancel-inner`, and `plus`-without-`star` is the heterogeneous 1-free
+Kleene algebra of Kozen (1998). Using the established names costs nothing and
+makes the design legible to anyone who knows the field — which for the stated
+audience is the point.
+
+The one place this library still departs deliberately is the identity, and the
+comparison is now sharper rather than weaker: Kahl removes it and works in
+semigroupoids throughout; this keeps it as a non-enumerable value. His whole
+hierarchy is built twice over, once with identities and once without, which is
+evidence the choice is real and consequential rather than a detail.
 
 ## Spike results
 
