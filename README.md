@@ -16,8 +16,9 @@ reshaping the data and every call site with it.
 The design and the reasoning behind it are in [`DESIGN.md`](./DESIGN.md), which
 is the brief as written before any code existed.
 [`NOTES.md`](./NOTES.md) records where the implementation departed from it and
-why — including two places where the brief was wrong, and one where a property
-test proved a textbook law false under the constraints this library adopts.
+why — including two things the brief expected that turned out not to hold, and
+one place where a property test proved a textbook law false under the
+constraints this library adopts.
 
 ## What is here
 
