@@ -63,6 +63,7 @@ module Impl = struct
     let fst_v = fst
     let snd_v = snd
     let is_prefix s ~prefix = String.is_prefix s ~prefix
+    let field ~name:_ f x = f x
     let opaque ~name:_ f x = f x
   end
 

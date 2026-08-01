@@ -118,6 +118,23 @@ module type SCALAR = sig
   val fst_v : ('a * 'b) v -> 'a v
   val snd_v : ('a * 'b) v -> 'b v
   val is_prefix : string v -> prefix:string v -> bool v
+
+  val field : name:string -> ('a -> 'b) -> 'a v -> 'b v
+  (** Project out a component. This is a host function like {!opaque}, and it
+      is deliberately {e not} the same thing.
+
+      An opaque predicate is a hole in the cost model: it decides membership by
+      means the planner cannot see, so its selectivity is unknown and
+      re-association has to stop. A projection decides nothing. It is total,
+      cheap, and its result is then compared by operations the planner {e can}
+      see, so the selectivity of the surrounding predicate remains legible and
+      the field is nameable in a plan.
+
+      This entry exists because spike 4 immediately ran into it: without a
+      projection, {e every} predicate over a record has to go through
+      {!opaque}, and the escape hatch would have looked far more necessary than
+      it is. See [examples/predicates.ml]. *)
+
   val opaque : name:string -> ('a -> bool) -> 'a v -> bool v
 end
 

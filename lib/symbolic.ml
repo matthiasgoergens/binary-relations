@@ -75,6 +75,7 @@ module Scalar = struct
   let fst_v x = un "fst" fst x
   let snd_v x = un "snd" snd x
   let is_prefix s ~prefix = bin "is_prefix" (fun s p -> String.is_prefix s ~prefix:p) s prefix
+  let field ~name f x = { node = Un ("." ^ name, x.node); ev = (fun u -> f (x.ev u)) }
   let opaque ~name f x = { node = Opaque (name, x.node); ev = (fun u -> f (x.ev u)) }
 end
 
@@ -136,6 +137,7 @@ module _ : Algebra.RELATIONS = Impl
 let rec string_of_node = function
   | Var -> "x"
   | Lit s -> s
+  | Un (op, a) when String.is_prefix op ~prefix:"." -> string_of_node a ^ op
   | Un (op, a) -> Printf.sprintf "%s(%s)" op (string_of_node a)
   | Bin ("is_prefix", a, b) ->
     Printf.sprintf "is_prefix(%s, %s)" (string_of_node a) (string_of_node b)

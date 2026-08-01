@@ -1,0 +1,7 @@
+(executables
+ (names predicates org_chart)
+ (libraries rel core)
+ (preprocess
+  (pps ppx_jane))
+ (flags
+  (:standard -warn-error -a)))
