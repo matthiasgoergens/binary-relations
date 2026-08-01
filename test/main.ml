@@ -329,6 +329,114 @@ let test_planner () =
        (Symbolic.run (Plan.optimise S.q)))
 
 (* ------------------------------------------------------------------ *)
+(* M4 — the same program as a self-adjusting graph                     *)
+(* ------------------------------------------------------------------ *)
+
+(* Written once, against the signature. Nothing in it knows whether it will
+   be run to a set of pairs or compiled into an Incremental graph. *)
+module Reachable_in_three (R : Algebra.RELATIONS) = struct
+  open R
+
+  let q ~a ~b ~c = a >> b >> c
+end
+
+let test_incremental () =
+  section "M4: one program, run one-shot and as a live self-adjusting graph";
+  let module QE = Reachable_in_three (Eval) in
+  let module QI = Reachable_in_three (Incr) in
+  let b = Relation.of_list (List.init 500 ~f:(fun i -> (i, i + 1))) in
+  let c = Relation.of_list (List.init 500 ~f:(fun i -> (i + 1, i * 2))) in
+  let a0 = Relation.of_list (List.init 500 ~f:(fun i -> (i, i))) in
+  let one_shot a =
+    Eval.to_relation
+      (QE.q ~a:(Eval.of_relation a) ~b:(Eval.of_relation b) ~c:(Eval.of_relation c))
+  in
+  let va = Incr.Var.create a0 in
+  let obs =
+    Incr.observe (QI.q ~a:(Incr.Var.watch va) ~b:(Incr.of_relation b) ~c:(Incr.of_relation c))
+  in
+  Incr.stabilize ();
+  check "the graph agrees with the one-shot evaluator"
+    (Relation.equal (Incr.Observer.value obs) (one_shot a0));
+
+  (* A stabilize with nothing changed must do nothing at all. *)
+  Relation.reset_counters ();
+  Incr.stabilize ();
+  check_eq_int "an unchanged stabilize does no work" ~expect:0 (Relation.tuples_touched ());
+
+  (* One tuple inserted. Built by union so that the new value shares structure
+     with the old one — which is what makes the diff cheap, and is only
+     possible because relations are immutable. *)
+  let a1 = Relation.union a0 (Relation.singleton 700 5) in
+  Relation.reset_counters ();
+  Incr.Var.set va a1;
+  Incr.stabilize ();
+  let incremental_cost = Relation.tuples_touched () in
+  Relation.reset_counters ();
+  let from_scratch = one_shot a1 in
+  let full_cost = Relation.tuples_touched () in
+  check "the incremental result is the right one"
+    (Relation.equal (Incr.Observer.value obs) from_scratch);
+  printf "   after inserting one tuple: incremental %d tuples, from scratch %d (%.0fx)\n"
+    incremental_cost full_cost
+    (Float.of_int full_cost /. Float.of_int (Int.max 1 incremental_cost));
+  check "maintaining the view is cheaper than recomputing it"
+    (incremental_cost < full_cost);
+
+  (* Changing the leaf nearest the root must not recompute the subtree that
+     did not change. Both ends are variables here so that [a >> b] is a real
+     node in the graph rather than a constant folded at construction time.
+
+     The first such update is not cheap, and the reason is worth stating
+     rather than hiding: composing the intermediate with a one-tuple delta
+     probes the intermediate's backward index, which does not exist yet, so
+     the update pays to build it. That is a one-off — it is an index, and an
+     index of an immutable value is never rebuilt. The steady-state cost is
+     what maintenance actually costs, so both are measured. *)
+  let va2 = Incr.Var.create a0 in
+  let vc = Incr.Var.create c in
+  let obs2 = Incr.observe (QI.q ~a:(Incr.Var.watch va2) ~b:(Incr.of_relation b) ~c:(Incr.Var.watch vc)) in
+  Incr.stabilize ();
+  let c1 = Relation.union c (Relation.singleton 1 999) in
+  Relation.reset_counters ();
+  Incr.Var.set vc c1;
+  Incr.stabilize ();
+  let first_update = Relation.tuples_touched () in
+  let c2 = Relation.union c1 (Relation.singleton 2 998) in
+  Relation.reset_counters ();
+  Incr.Var.set vc c2;
+  Incr.stabilize ();
+  let steady_update = Relation.tuples_touched () in
+  printf
+    "   changing the last leaf: first update %d tuples (builds an index on the intermediate), \
+     then %d\n"
+    first_update steady_update;
+  check "in the steady state the unchanged sibling subtree costs nothing" (steady_update < 100);
+  check "and the answer is still right"
+    (Relation.equal
+       (Incr.Observer.value obs2)
+       (Eval.to_relation
+          (QE.q ~a:(Eval.of_relation a0) ~b:(Eval.of_relation b) ~c:(Eval.of_relation c2))));
+
+  (* Deletion is the case the delta path does not handle, because a pair may
+     still be derivable another way. It must fall back and still be right —
+     that is the part worth testing, since a wrong incremental view is far
+     worse than a slow one. *)
+  let a2 = Relation.diff a1 (Relation.singleton 300 300) in
+  Incr.Var.set va a2;
+  Incr.stabilize ();
+  check "a deletion falls back to recomputation and stays correct"
+    (Relation.equal (Incr.Observer.value obs) (one_shot a2));
+
+  (* And a mixed change, which is where an insert-only shortcut taken by
+     mistake would show up. *)
+  let a3 = Relation.union (Relation.diff a2 (Relation.singleton 100 100)) (Relation.singleton 42 7) in
+  Incr.Var.set va a3;
+  Incr.stabilize ();
+  check "an insert and a delete together stay correct"
+    (Relation.equal (Incr.Observer.value obs) (one_shot a3))
+
+(* ------------------------------------------------------------------ *)
 
 let () =
   test_laws ();
@@ -337,5 +445,6 @@ let () =
   test_closure ();
   test_unbounded ();
   test_planner ();
+  test_incremental ();
   printf "\n%d checks, %d failures\n" !checks !failures;
   if !failures > 0 then exit 1

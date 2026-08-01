@@ -212,5 +212,12 @@ let rdiv x y =
       if Set.is_subset needed ~of_:has then Set.add acc (a, b) else acc))
   |> of_pairs
 
+let delta ~from ~to_ =
+  let added = ref Set.Poly.empty and removed = ref Set.Poly.empty in
+  Sequence.iter (Set.symmetric_diff (pairs from) (pairs to_)) ~f:(function
+    | First p -> removed := Set.add !removed p
+    | Second p -> added := Set.add !added p);
+  (of_pairs !added, of_pairs !removed)
+
 let symmetric_diff_fwd x y =
   Map.symmetric_diff (fwd x) (fwd y) ~data_equal:Set.equal |> Sequence.to_list

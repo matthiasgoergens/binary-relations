@@ -131,6 +131,15 @@ val rdiv : ('a, 'c) t -> ('b, 'c) t -> ('a, 'b) t
 
 (** {2 Incremental support} *)
 
+val delta : from:('a, 'b) t -> to_:('a, 'b) t -> ('a, 'b) t * ('a, 'b) t
+(** The pairs added and the pairs removed, via [Set.symmetric_diff]. Cheap
+    when the two values share structure — which they do whenever one was
+    derived from the other by a union or an insert — because the traversal
+    skips physically equal subtrees instead of walking both sets in full. This
+    is the primitive incremental maintenance is built on, and the reason it
+    exists at all is immutability: two versions of a mutable relation would
+    share nothing to skip. *)
+
 val symmetric_diff_fwd :
   ('a, 'b) t ->
   ('a, 'b) t ->

@@ -1,6 +1,6 @@
 (library
  (name rel)
- (libraries core)
+ (libraries core incremental)
  (preprocess
   (pps ppx_jane))
  (flags
