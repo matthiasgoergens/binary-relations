@@ -31,6 +31,18 @@ let () =
      small and the per-insert cost is already sub-microsecond, there is nothing
      to win. *)
   Stdio.printf "\n   index build on the finished value:\n";
-  let r = Relation.of_list pairs in
-  let fwd = time "first image lookup (builds an index)" (fun () -> ignore (Relation.image r 0 : int Set.Poly.t); r) in
-  ignore fwd
+  let r1 = Relation.of_list pairs in
+  let fwd =
+    time "forward index (first image lookup)" (fun () ->
+      ignore (Relation.image r1 0 : int Set.Poly.t);
+      r1)
+  in
+  let r2 = Relation.of_list pairs in
+  let bwd =
+    time "backward index (first preimage lookup)" (fun () ->
+      ignore (Relation.preimage r2 0 : int Set.Poly.t);
+      r2)
+  in
+  Stdio.printf
+    "\n   the two indexes together cost %.0f%% of building the relation\n"
+    ((fwd +. bwd) /. bulk *. 100.)
