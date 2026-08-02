@@ -1,5 +1,5 @@
 (executables
- (names predicates org_chart)
+ (names predicates org_chart merlin_index)
  (libraries rel rel_incr core)
  (preprocess
   (pps ppx_jane))
