@@ -535,6 +535,46 @@ what makes indexes pay, and immutability is what makes caching them safe
 without any coherence machinery". Two separate things, and only the second is
 about immutability.
 
+## An audit refuted the published numbers
+
+Every ratio in this repo was stated in `Relation.tuples_touched`. That counter
+is a *model*: it counts tuples scanned and produced, and charges nothing for
+the per-tuple constants that dominate at these sizes — set allocation, index
+probes, set intersections. Measured against the clock (`bench/headline.ml`,
+mean ± sd over 10 runs):
+
+| | counter | wall clock | |
+|---|---|---|---|
+| semi-naive closure | 16.0× | 14.9× | agrees |
+| triangle fusion | 123.2× | 69.1× | optimistic by 1.8× |
+| **4-cycle fusion** | **222.8×** | **13.0×** | **optimistic by 17×** |
+| chain re-association, warm | 376× | 818× | agrees in spirit |
+| chain re-association, **cold** | never measured | **0.93×** | **a wash** |
+
+Two findings, and the second is worse than the first.
+
+**The counter flatters probe-heavy work.** `meet_compose3` does many small
+index descents and set intersections per pair of `z` and is charged roughly one
+tuple for the frontier; materialising a composition allocates a large set and
+is charged per tuple. So the fused path looks 17× better than it is. The
+counter is still useful — it is deterministic, it caught the blindness in the
+set operations, and it agrees with the clock on allocation-dominated work like
+the closure — but it is not a cost model and must not be quoted as one.
+
+**Planning does not pay for itself at 500 pairs.** Re-association is worth 818×
+*given a plan*; building the plan costs about what it saves, so end to end a
+caller sees 0.93×. Both numbers are true and only the first was ever published.
+The honest statement is that the planner's value here is a claim about
+asymptotics and about plans that get reused, not about a single cold query.
+
+**How it survived so long.** Every measurement was made in the same unit the
+implementation was instrumented in, so no measurement could ever contradict
+the instrument. The counter was corrected twice in one session — once for set
+operations, once for a new probing path — and each correction moved the
+published numbers, which should have been the signal that the unit itself was
+load-bearing and unvalidated. It took an explicit adversarial pass to compare
+it against something external.
+
 ## Prior art: Oliveira, products and coreflexives
 
 Reading queue item 3, and unlike the Kahl episode this one was done *before*

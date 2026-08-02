@@ -88,55 +88,36 @@ let over_40 = of_relation people >> where_ (fun age -> age >. int_ 40)
 
 ## What is measured
 
-Everything below is asserted by the test suite as a measurement, not as a
-comment. Numbers are tuples touched, from `Relation.tuples_touched`.
+Everything below is asserted by the test suite. **Ratios are wall-clock, mean
+± sd over 10 runs** (`bench/headline.exe`); the suite additionally asserts them
+in `Relation.tuples_touched`, an internal counter.
 
-> **All figures below were re-measured on 2026-08-02** after the cost counter
-> was found to be blind to `meet`, `union`, `diff` and `filter` — it charged
-> nothing for any set operation, so every measurement involving one was
-> understated. Several published numbers moved: the semi-naive closure win from
-> 21.5× to 16.0×, incremental maintenance from 751× to 501×, filter pushdown
-> from 39.8× to 13.6×. The counter now charges `min` of the two cardinalities,
-> which matches Base's divide-and-conquer set operations far better than the
-> sum and still understates by a log factor — deliberately, since that is the
-> conservative direction for every ratio claimed here.
+> **The counter is not a cost model, and an audit caught this repo treating it
+> as one.** It counts tuples scanned and produced and charges nothing for the
+> per-tuple constants — set allocation, index probes, intersections — so it
+> flatters probe-heavy work over allocation-heavy work. Where it agrees with
+> the clock, both are quoted; where it does not, the clock wins and the
+> discrepancy is shown, because the discrepancy is the interesting part.
 
+| claim | wall clock | counter |
+|---|---|---|
+| semi-naive closure beats the naive fixpoint | **14.9×** (2.634 ± 0.058 → 0.247 ± 0.105 ms) | 16.0× |
+| fusing a meet into a composition, skewed triangle | **69.1×** (25.080 ± 0.605 → 0.362 ± 0.030 ms) | 123.2× |
+| three-way fusion of a skewed 4-cycle | **13.0×** (62.543 ± 1.499 → 5.064 ± 0.082 ms) | 222.8× |
+| re-association, *given a plan* | **818×** (0.159 ± 0.017 → ~0.000 ms) | 376× |
+| re-association, **end to end including planning** | **0.93× — a wash** | not measured before |
+| an index is built once and never invalidated | — | 1 build for 100 lookups |
+| converse does no index work | — | 0 additional builds |
+| the scalar language covers ordinary business predicates | — | 10 of 14 need no escape hatch |
 
-| claim | measurement |
-|---|---|
-| an index is built once and never invalidated | 1 build for 100 lookups; the second direction is a second build |
-| converse does no index work | 0 additional builds over 100 lookups on the converse |
-| semi-naive closure beats the naive fixpoint | 1 770 vs 28 305 on a 30-link chain (16.0×) |
-| re-association beats the order written | 4 vs 1 502 on a 500×500×1 chain (376×) |
-| maintaining a view beats recomputing it | 6 vs 3 004 on a one-tuple insert (501×) |
-| an unchanged sibling subtree is not recomputed | 3 tuples in the steady state |
-| the scalar language covers ordinary business predicates | 10 of 14; 4 need the escape hatch |
-| fusing a meet into a composition, skewed triangle | 252 549 vs 2 050 tuples (123.2×) |
-| three-way fusion of a skewed 4-cycle | 278 499 vs 1 250 tuples (222.8×) |
-| binding a filter to its neighbour before planning | 13 200 vs 971 tuples (13.6×) |
-| distributing a filter over a fork | 36 000 vs 8 150 tuples (4.4×) |
-
-Two of those are the ones whose failure mode is a wrong answer rather than a
-slow one, so they are attacked rather than demonstrated: 400 randomly generated
-expression trees are rewritten by the planner and re-run against the original,
-and 300 rounds of random insert-and-delete are checked against a from-scratch
-recomputation. Both also assert they are not vacuous — the planner actually
-rewrote 335 of the 400 trees, and the delta path was taken 210 times against
-128 fallbacks. A no-op optimiser and a composition node that quietly recomputed
-every time would both pass the correctness check and mean nothing.
-
-The planner's own statistics cost one index build per relation — exact and
-never stale is not the same as free, and
-[`NOTES.md`](./NOTES.md#the-planner-refuses-rather-than-guesses) records how
-the first version of that measurement was unfair and said the opposite.
-
-More importantly, **the argument M5 was built on has since been withdrawn.**
-Exact leaf statistics do not give good join estimates, because join cardinality
-depends on the correlation *between* relations: two of the measured cases have
-identical per-relation statistics and true results 100× apart. The
-re-association win above is real, the justification for it was not, and the
-brief now points at worst-case-optimal joins instead. See
-[`NOTES.md`](./NOTES.md#m5s-justification-was-withdrawn-and-the-measurement-agrees).
+Two of those rows deserve reading twice. The 4-cycle fusion is a real 13×, not
+the 223× the counter reported — the counter is 17× optimistic there, because
+the fused path does many small index probes it barely charges for. And
+**planning does not pay for itself at this size**: re-association is worth 818×
+once you have a plan, and computing the plan costs about what it saves, so a
+caller who builds, plans and runs once sees nothing. That distinction was never
+published before the audit, and it is the honest headline for a 500-pair
+relation.
 
 ## Building
 

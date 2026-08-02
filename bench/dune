@@ -1,5 +1,5 @@
-(executable
- (name build)
+(executables
+ (names build verify_counter headline)
  (libraries rel base stdio unix)
  (flags
   (:standard -warn-error -a)))
