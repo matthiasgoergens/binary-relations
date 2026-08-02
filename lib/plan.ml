@@ -1,16 +1,36 @@
 (** M5: a query planner over {!Symbolic} trees.
 
     DataScript has no planner — its joins are hash joins folded over the
-    clauses {e in the order written}. That is the gap this closes, and it
-    closes with an advantage that inverts the usual difficulty:
+    clauses {e in the order written}. That is the gap this closes.
+
+    {2 The argument this module was built on has been withdrawn}
+
+    It was originally motivated by this claim, quoted here only so that nobody
+    reconstructs it from the code:
 
     {v
-      Immutability makes planning easier than in a real DBMS. Cardinality,
-      distinct counts and fan-out are pure functions of an immutable value,
-      so they are computed once, memoised on the relation, and are exact and
-      never stale. A real database plans against sampled statistics that
-      drift; here the planner has perfect information, for free.
+      Immutability makes planning easier than in a real DBMS. [...] here the
+      planner has perfect information, for free.                  -- WITHDRAWN
     v}
+
+    Three things are wrong with it. Exact statistics are not {e free}: they
+    cost an index build per relation, which is why the first measurement of
+    this module was unfair. They are not the statistics that matter: join
+    cardinality depends on the correlation {e between} relations, and this
+    library's own tests exhibit two shapes with {e identical} per-relation
+    statistics whose true results differ by 100×. And the memoisation barely
+    applies, since every derived relation is a fresh value with no cached
+    statistics. See Leis et al., {e How Good Are Query Optimizers, Really?}
+    (VLDB 2015): estimators are routinely off by orders of magnitude, and the
+    cost model matters far less than the estimates fed to it.
+
+    What survives is worth having and is smaller: statistics here are exact
+    and cannot go {e stale}, the re-association win is measured and real, and
+    the algebraic simplifications below use no estimates whatsoever. Treat this
+    module as resting on an estimator known to be an order of magnitude out in
+    {e both} directions under skew — it is not even conservative. [NOTES.md],
+    sections "M5's justification was withdrawn" and "M5, second attempt", is
+    the live account.
 
     Three passes, in order.
 
@@ -21,7 +41,8 @@
       to materialise a new set of pairs. Rewriting [(a >> b)°] to [b° >> a°]
       turns a real cost into none.
     - {b Re-association} of composition chains, by the usual interval dynamic
-      program, over exact statistics.
+      program, over statistics that are exact {e at the leaves} — see the
+      caveat on {!type:info} for what happens further up.
     - Nothing at all across a {b barrier}. An element the cost model cannot
       see through — an [opaque] predicate, a host function, a [where_] whose
       selectivity is unknown — stops re-association there rather than being
@@ -121,8 +142,21 @@ let rec right_deep : type a b. (a, b) chain -> (a, b) Symbolic.t =
 (* ------------------------------------------------------------------ *)
 
 (** What the planner knows about a (sub)expression. For a leaf every field is
-    exact; for an intermediate they are estimates, but estimates built from
-    exact inputs rather than from a sample. *)
+    exact.
+
+    For an intermediate they are estimates — and {b only for a two-leaf chain
+    are they estimates built from exact inputs}. {!plan_run}'s dynamic program
+    assigns [inf.(i).(j) <- combine inf.(i).(k) inf.(k).(j)], so from three
+    leaves on, {!combine} is fed its own output and the uniformity assumption
+    below {e compounds along the chain}. That is the Leis et al. result
+    restated: estimation error grows with the number of joins, precisely
+    because estimates are built on estimates. Exactness at the leaves does not
+    prevent it; it only sets the starting point.
+
+    This is a statement about the {e numbers}, not about correctness. The
+    planner never emits a plan it did not cost ([build] raises rather than
+    falling back), and the one rewrite that consults these numbers asks them
+    only for an ordering against an exact leaf count — see [fuse_meet] below. *)
 type info = { card : float; dom : float; rng : float }
 
 let info_of_relation r =
@@ -137,8 +171,13 @@ let info_of : type a b. (a, b) Symbolic.t -> info option = function
   | Leaf r -> Some (info_of_relation r)
   | _ -> None
 
-(* The textbook join-size estimate under uniformity. The uniformity assumption
-   is the only guess left, because the inputs to it are not estimated. *)
+(* The textbook join-size estimate under uniformity.
+
+   The uniformity assumption is the only guess *introduced here*. It is not the
+   only guess in play: [plan_run] feeds this function its own output, so along a
+   chain of three or more leaves the inputs are themselves estimates and the
+   assumption compounds. Exact leaves bound the first application, not the
+   last. See the note on [info]. *)
 let combine x y =
   let denom = Float.max 1.0 (Float.max x.rng y.dom) in
   let card = x.card *. y.card /. denom in
