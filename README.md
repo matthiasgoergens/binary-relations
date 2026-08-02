@@ -119,6 +119,22 @@ caller who builds, plans and runs once sees nothing. That distinction was never
 published before the audit, and it is the honest headline for a 500-pair
 relation.
 
+## A known limit, found on real data
+
+`rel` orders elements by structural comparison (`Comparator.Poly`), which is
+what keeps a relation at exactly two type parameters. On merlin's real
+occurrence index — 78 950 uids, 201 866 pairs, read from disk — that **runs out
+of memory**: a merlin `Lid.t` is a handle into a lazily-unmarshalled graph
+reaching ~10 900 words, and merlin itself compares only three scalars from it
+with a hand-written comparator. See
+[`NOTES.md`](./NOTES.md#ordering-is-structural--and-real-data-has-now-refuted-it)
+for the options; the likely resolution is `Core`'s, four parameters with a
+`Poly` alias, which means the premise bends rather than the implementation.
+
+Today the library is sound for values whose structural order is meaningful and
+whose representation is small. That covers application state and loaded
+datasets; it excludes anything built on lazy links, interning or hash-consing.
+
 ## Building
 
 `rel` itself needs only `base` and `sexplib0`. `Incremental` forces `Core`, so

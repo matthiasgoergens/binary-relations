@@ -63,25 +63,77 @@ specific design than the one this file guessed at, and it now has a number
 behind it: the two indexes together still cost more than constructing the
 relation.
 
-## Ordering is structural
+## Ordering is structural — and real data has now refuted it
 
-Elements are compared with `Comparator.Poly`, i.e. structural comparison.
+Elements are compared with `Comparator.Poly`, i.e. structural comparison. The
+premise it protects is that a relation has exactly two type parameters, which
+is what the whole binary framing buys; carrying comparators the way `Core.Map`
+does costs two more, and carrying them as values inside the relation makes
+`union` silently unsound when two relations built with different comparators
+for the same type meet.
 
-The alternative was to carry comparators the way `Core.Map` normally does,
-which costs two more type parameters — and two type parameters is the whole
-type-checking win the binary framing exists to buy. Carrying them as *values*
-inside the relation keeps the type but is unsound: two relations built with
-different comparators for the same type meeting in a `union` would dedup
-inconsistently, silently.
+The cost was recorded here as the usual small print: raises on functional
+values, diverges on cyclic ones, cannot express a domain-specific order. That
+understated it.
 
-Cost, stated plainly: it raises on functional values, diverges on cyclic ones,
-and cannot express a domain-specific order such as case-insensitive strings.
-The escape hatch is to wrap the element in a type whose structural order *is*
-the intended one. If this ever becomes the binding constraint, the fix is
-OxCaml's or a future OCaml's ability to carry the comparator without widening
-the type — not a fourth type parameter.
+### What happened
 
-## The signature ladder, and two operations that are not there
+The scan's best target was merlin's occurrence index. Linking merlin's real
+`Index_format` and reading a real 13 MB index built by `ocaml-index` from
+merlin's own 164 `.cmt` files — 78 950 uids, 201 866 pairs — `rel` **runs out
+of memory** building the backward index:
+
+```
+Fatal error: exception Out of memory
+Raised by primitive operation at Base__Comparator.Poly.compare
+Called from Base__Map.Tree0.update
+```
+
+Not slow. Not wrong. Unusable, on the best candidate the scan found.
+
+### Why
+
+A merlin `Lid.t` is not a small structural value. It is a handle into a
+lazily-unmarshalled shared graph (`Granular_marshal`), and one reaches
+**10 890 words**. Comparing two that differ early is instant — measured, 0.0 ms
+— but building a map of two hundred thousand of them makes polymorphic
+comparison force and traverse that graph over and over.
+
+Merlin does not have this problem because it does not use structural
+comparison. `Lid.compare` (`src/index-format/lid.ml:44`) is hand-written and
+compares **three scalars**: the filename, and the start and stop character
+offsets. Everything else in the value is deliberately not looked at. That is
+exactly the capability `rel` gave up.
+
+### What this means for the premise
+
+"Two type parameters" and "works on real values" are in direct conflict, and
+real data decided it. The honest options:
+
+1. **Follow `Core`.** Four parameters in general (`('a, 'cmp_a, 'b, 'cmp_b) t`)
+   with a `Rel.Poly` convenience alias for the easy case — which is precisely
+   the shape `Core.Map` settled on, for what look like the same reasons.
+2. **Carry comparators in the value** and accept that mixing two relations
+   built with different ones is a runtime error rather than a type error. Ugly,
+   but it keeps the surface and the premise intact.
+3. **Keep `Poly` and document the limit honestly** — that `rel` is for values
+   whose structural order is meaningful and whose representation is small,
+   which excludes anything built on lazy links, hash-consing or interning.
+
+Option 1 is what the evidence supports, and it means the brief's premise bends
+rather than the implementation. That is a bigger change than anything else in
+this file, so it is recorded rather than acted on unilaterally.
+
+### The pattern, for the third time
+
+Internal testing could not have found this. 136 checks, 50 laws, four
+adversarial suites — all over `int` and `string` relations built in-process,
+where structural comparison is exactly right. The defect needed a value whose
+representation was chosen by somebody else. That is the third finding this
+session from pointing the library at foreign code, after `Pset` and the
+`Unbounded` over-refusal.
+
+## The signature ladder## The signature ladder, and two operations that are not there
 
 The brief sketches one flat `ALLEGORY`. The code cuts it as the brief says it
 wants: `CATEGORY` → `ALLEGORY` (converse, meet) → `UNION_ALLEGORY` (join, bot)
