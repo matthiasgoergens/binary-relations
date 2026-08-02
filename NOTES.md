@@ -121,8 +121,51 @@ real data decided it. The honest options:
    which excludes anything built on lazy links, hash-consing or interning.
 
 Option 1 is what the evidence supports, and it means the brief's premise bends
-rather than the implementation. That is a bigger change than anything else in
-this file, so it is recorded rather than acted on unilaterally.
+rather than the implementation.
+
+### Spiked it. Feasible for the binary case, blocked at products.
+
+`~/prog/binary-relations-notes/core-spike/` carries witnesses in the type,
+`('a, 'acmp, 'b, 'bcmp) t`, and works: composition type-checks only when the
+middle comparators agree (which is the soundness the witness buys), converse
+stays free because the two indexes simply swap, and a **domain-specific
+comparator does what `Poly` cannot** — with a comparator that looks only at a
+string's first character, `"apple"` and `"avocado"` collapse to one key. That
+is the merlin case in miniature.
+
+Two things the spike settled that reading could not.
+
+**The canonical pair set has to go.** A set of `'a * 'b` needs a comparator for
+the pair type, whose witness must be a function of the two element witnesses.
+Base cannot express that: `Comparator.t` is private, so one cannot be
+constructed at a chosen witness, and `Comparator.make` mints a *fresh*
+generative witness per call, so two derived pair comparators over the same
+element types would not unify. The two index maps carry the same information
+and each needs only one element comparator, so the representation becomes
+fwd-plus-lazy-bwd. That is a consequence of following Core, not a workaround.
+
+**Products are the real blocker.** `fork : ('a,'b) t -> ('a,'c) t -> ('a,'b*'c) t`
+produces a relation whose range *is* pairs, so a finite result needs exactly
+the product comparator that cannot be derived. `fst_` and `snd_` escape only
+because they are function graphs that store no comparator and can stay
+polymorphic in the phantom. Three ways out:
+
+1. `fork` takes a comparator argument — changes the algebra's signature, and
+   the algebra is the part the brief is proudest of.
+2. Define our own comparator type rather than Base's. The witness is purely
+   phantom and a non-private record *can* be built at a derived witness type,
+   so `('wa, 'wb) prod` becomes expressible. The cost is that
+   `Set.Using_comparator` and `Map.Using_comparator` no longer apply, which
+   means a purpose-built layer 0 — the very thing measured away at the top of
+   this file.
+3. Keep `Poly` for the product case only, so `fork` results are ordered
+   structurally while everything else can be given a real comparator. Sound,
+   inconsistent, and probably the pragmatic answer.
+
+Worth noticing where that lands: option 2 says the two decisions this file
+recorded as independent — "layer 0 was not needed" and "structural comparison
+is an acceptable cost" — were the same decision seen twice. Dropping `Poly`
+brings layer 0 back.
 
 ### The pattern, for the third time
 
