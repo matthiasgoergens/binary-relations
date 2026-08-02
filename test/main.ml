@@ -1008,22 +1008,26 @@ let test_long_cycle_gap () =
     let r = Symbolic.run t in
     (r, Relation.tuples_touched ())
   in
-  let _, tri_plain = measure S.triangle in
-  let _, tri_fused = measure (Plan.optimise S.triangle) in
-  let _, sq_plain = measure S.square in
+  let tri_a, tri_plain = measure S.triangle in
+  let tri_b, tri_fused = measure (Plan.optimise S.triangle) in
+  let sq_a, sq_plain = measure S.square in
   let sq_planned = Plan.optimise S.square in
-  let _, sq_fused = measure sq_planned in
+  let sq_b, sq_fused = measure sq_planned in
   printf "   triangle : %6d -> %6d  (%.1fx)\n" tri_plain tri_fused
     (Float.of_int tri_plain /. Float.of_int (Int.max 1 tri_fused));
   printf "   4-cycle  : %6d -> %6d  (%.1fx)\n" sq_plain sq_fused
     (Float.of_int sq_plain /. Float.of_int (Int.max 1 sq_fused));
   printf "   4-cycle planned as: %s\n" (Symbolic.to_string sq_planned);
-  (* Recorded as an assertion so the gap cannot silently close or widen: the
-     triangle is fused well, the 4-cycle is barely touched, because fusion
-     only removes the OUTERMOST composition and [a >> a] is still built. *)
+  (* A speedup that computes the wrong answer is worth nothing, so check that
+     first. The random-tree equivalence test covers this shape too, but not
+     with data chosen to make the fusion fire. *)
+  check "the fused triangle agrees with the unfused one" (Relation.equal tri_a tri_b);
+  check "the fused 4-cycle agrees with the unfused one" (Relation.equal sq_a sq_b);
+  check "the fused 4-cycle is not vacuous" (Relation.card sq_b > 0);
   check "the triangle is fused well" (tri_fused * 10 < tri_plain);
-  check "the longer cycle is not: this is the remaining WCOJ gap"
-    (sq_fused * 2 > sq_plain)
+  (* Was pinned as an open gap at 1.0x; three-way fusion closed it. *)
+  check "and so is the longer cycle, now that fusion splits it in the middle"
+    (sq_fused * 10 < sq_plain)
 
 
 

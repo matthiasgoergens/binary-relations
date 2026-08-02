@@ -112,6 +112,7 @@ comment. Numbers are tuples touched, from `Relation.tuples_touched`.
 | an unchanged sibling subtree is not recomputed | 3 tuples in the steady state |
 | the scalar language covers ordinary business predicates | 10 of 14; 4 need the escape hatch |
 | fusing a meet into a composition, skewed triangle | 252 549 vs 2 050 tuples (123.2×) |
+| three-way fusion of a skewed 4-cycle | 278 499 vs 1 250 tuples (222.8×) |
 | binding a filter to its neighbour before planning | 13 200 vs 971 tuples (13.6×) |
 | distributing a filter over a fork | 36 000 vs 8 150 tuples (4.4×) |
 

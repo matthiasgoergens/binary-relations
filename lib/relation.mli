@@ -170,6 +170,16 @@ val meet_compose : ('a, 'b) t -> ('b, 'c) t -> ('a, 'c) t -> ('a, 'c) t
     Free Join (Wang, Willsey and Suciu, SIGMOD 2023) argues for: start from a
     good binary plan and fuse where it pays. *)
 
+val meet_compose3 : ('a, 'm) t -> ('m, 'n) t -> ('n, 'b) t -> ('a, 'b) t -> ('a, 'b) t
+(** [meet_compose3 x m y z] is [(x >> m >> y) ∧ z] with no intermediate built.
+
+    {!meet_compose} materialises its left operand, so on a chain of three it
+    still builds [x >> m] — measured as no help at all on a 4-cycle. Splitting
+    in the middle lets both ends be probed through existing indexes: forward
+    from the left endpoint through [x], backward from the right through [y],
+    then ask whether [m] joins the frontiers. Which frontier is iterated is
+    chosen per pair by size, which is what makes it work on skewed data. *)
+
 (** {2 Incremental support} *)
 
 val delta : from:('a, 'b) t -> to_:('a, 'b) t -> ('a, 'b) t * ('a, 'b) t

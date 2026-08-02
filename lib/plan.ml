@@ -104,6 +104,7 @@ let rec simplify : type a b. (a, b) Symbolic.t -> (a, b) Symbolic.t =
   | Rdiv (x, y) -> Rdiv (simplify x, simplify y)
   | Ldiv (x, y) -> Ldiv (simplify x, simplify y)
   | MeetComp (x, y, z) -> MeetComp (simplify x, simplify y, simplify z)
+  | MeetComp3 (x, m, y, z) -> MeetComp3 (simplify x, simplify m, simplify y, simplify z)
   | Id | Bot | Fst | Snd | Where _ | Fn _ | Leaf _ -> t
 
 (* ------------------------------------------------------------------ *)
@@ -320,6 +321,8 @@ let rec reassociate : type a b. (a, b) Symbolic.t -> (a, b) Symbolic.t =
   | Star x -> Star (reassociate x)
   | Group x -> Group (reassociate x)
   | MeetComp (x, y, z) -> MeetComp (reassociate x, reassociate y, reassociate z)
+  | MeetComp3 (x, m, y, z) ->
+    MeetComp3 (reassociate x, reassociate m, reassociate y, reassociate z)
   | Id | Bot | Fst | Snd | Where _ | Fn _ | Leaf _ -> t
 
 (** The estimated cost of a tree as written, in tuples touched. Composition
@@ -379,12 +382,26 @@ let fuse_meet p q z =
    before a meet duplicates it. Measured: 36 000 tuples against 8 150 through
    a fork (4.4x), and 5 250 against 8 025 through a meet — a loss, so that one
    is deliberately absent. *)
+(* Same guard as the two-way case: fusing is a win when [z] is no larger than
+   the intermediate it would otherwise discard, and a loss when it is not. *)
+let fuse_meet3 p q r z =
+  match (fst (estimate (Comp (Comp (p, q), r))), fst (estimate z)) with
+  | Some ipqr, Some iz when Float.( <= ) iz.card ipqr.card -> MeetComp3 (p, q, r, z)
+  | _ -> Meet (Comp (Comp (p, q), r), z)
+
 let rec fuse : type a b. (a, b) Symbolic.t -> (a, b) Symbolic.t =
  fun t ->
   match t with
   | Comp ((Where _ as c), Fork (p, q)) -> Fork (fuse (Comp (c, p)), fuse (Comp (c, q)))
   | Comp ((Meet (Id, _) as c), Fork (p, q)) -> Fork (fuse (Comp (c, p)), fuse (Comp (c, q)))
   | Comp ((Meet (_, Id) as c), Fork (p, q)) -> Fork (fuse (Comp (c, p)), fuse (Comp (c, q)))
+  (* A chain of three fuses three ways: a two-way split would still build one
+     half, which on a 4-cycle is the entire cost. Both association shapes are
+     matched because [simplify] does not normalise them. *)
+  | Meet (Comp (Comp (p, q), r), z) -> fuse_meet3 (fuse p) (fuse q) (fuse r) (fuse z)
+  | Meet (Comp (p, Comp (q, r)), z) -> fuse_meet3 (fuse p) (fuse q) (fuse r) (fuse z)
+  | Meet (z, Comp (Comp (p, q), r)) -> fuse_meet3 (fuse p) (fuse q) (fuse r) (fuse z)
+  | Meet (z, Comp (p, Comp (q, r))) -> fuse_meet3 (fuse p) (fuse q) (fuse r) (fuse z)
   | Meet (Comp (p, q), z) -> fuse_meet (fuse p) (fuse q) (fuse z)
   | Meet (z, Comp (p, q)) -> fuse_meet (fuse p) (fuse q) (fuse z)
   | Meet (x, y) -> Meet (fuse x, fuse y)
@@ -398,6 +415,7 @@ let rec fuse : type a b. (a, b) Symbolic.t -> (a, b) Symbolic.t =
   | Star x -> Star (fuse x)
   | Group x -> Group (fuse x)
   | MeetComp (x, y, z) -> MeetComp (fuse x, fuse y, fuse z)
+  | MeetComp3 (x, m, y, z) -> MeetComp3 (fuse x, fuse m, fuse y, fuse z)
   | Id | Bot | Fst | Snd | Where _ | Fn _ | Leaf _ -> t
 
 let optimise t = reassociate (fuse (simplify t))
@@ -426,6 +444,7 @@ let blind_spots : type a b. (a, b) Symbolic.t -> string list =
     | Rdiv (x, y) -> go x; go y
     | Ldiv (x, y) -> go x; go y
     | MeetComp (x, y, z) -> go x; go y; go z
+    | MeetComp3 (x, m, y, z) -> go x; go m; go y; go z
   in
   go t;
   List.rev !acc

@@ -305,6 +305,41 @@ let meet_compose x y z =
          | _ -> acc))
   end
 
+(* [(x >> m >> y) ∧ z] with no intermediate at all.
+
+   The two-argument version materialises its left operand, which on a chain of
+   three means building [x >> m] — and on skewed data that is the entire cost.
+   Splitting the chain in the middle instead lets both ends be probed through
+   the indexes they already have: walk forward from [u] through [x], backward
+   from [w] through [y], and ask whether [m] joins the two frontiers.
+
+   Which frontier to iterate matters more than anything else here, so it is
+   chosen per pair: on a hub graph one side is the whole hub and the other is a
+   single element, and iterating the wrong one is the difference between a
+   scan and a lookup. *)
+let meet_compose3 x m y z =
+  if x.card_ = 0 || m.card_ = 0 || y.card_ = 0 || z.card_ = 0 then empty
+  else begin
+    let xf = fwd x and yb = bwd y in
+    touch z.card_;
+    of_pairs
+      (Set.fold (pairs z) ~init:Set.Poly.empty ~f:(fun acc (u, w) ->
+         match (Map.find xf u, Map.find yb w) with
+         | Some fwd_set, Some bwd_set ->
+           let joined =
+             if Set.length fwd_set <= Set.length bwd_set then (
+               touch (Set.length fwd_set);
+               Set.exists fwd_set ~f:(fun t ->
+                 not (Set.is_empty (Set.inter (image m t) bwd_set))))
+             else (
+               touch (Set.length bwd_set);
+               Set.exists bwd_set ~f:(fun v ->
+                 not (Set.is_empty (Set.inter (preimage m v) fwd_set))))
+           in
+           if joined then Set.add acc (u, w) else acc
+         | _ -> acc))
+  end
+
 let delta ~from ~to_ =
   let added = ref Set.Poly.empty and removed = ref Set.Poly.empty in
   Sequence.iter (Set.symmetric_diff (pairs from) (pairs to_)) ~f:(function

@@ -393,33 +393,50 @@ rewrite that needed its absolute numbers would not be trustworthy; one that
 needs a comparison is. Tested: on `meet (small >> small) big` the planner
 declines to fuse.
 
-### Still not done, and now measured
+### Longer cycles: closed, on the second attempt
 
-This is not a WCO join engine, and the gap has a number on it. On a hub graph:
+On a hub graph, with the two-way fusion only:
 
 | | unfused | fused | |
 |---|---|---|---|
 | triangle, `meet (a >> a) g` | 91 549 | 1 250 | **73.2×** |
 | 4-cycle, `meet (a >> a >> a) g` | 278 499 | 271 900 | **1.0×** |
 
-Fusion only removes the *outermost* composition, so on a longer chain the
-inner `a >> a` is still materialised and almost nothing is saved. Both figures
-are asserted in the suite, the second one deliberately — the gap should not be
-allowed to close or widen silently.
+Two-way fusion removes only the *outermost* composition, so on a chain of
+three the inner `a >> a` is still materialised and nothing is saved. **No
+two-way split can fix that** — whichever way the chain is cut, one side is the
+expensive intermediate.
 
-**An attempt to close it made things worse, and the measurement said so.**
-Replacing the materialise-then-probe step with a *structural* probe — walking
-the term per pair of `z`, so no intermediate is ever built — measured **0.5×
-on the triangle and 0.8× on the 4-cycle**, i.e. a regression. The reason is
-amortisation: materialising `a >> a` once and building its index pays for
-itself across every pair of `z`, whereas a per-pair walk redoes that work each
-time. Reverted.
+**The first attempt made things worse and the measurement said so.** Replacing
+materialise-then-probe with a *structural* probe — walking the term per pair of
+`z`, so no intermediate is ever built — measured **0.5× on the triangle and
+0.8× on the 4-cycle**. Materialising `a >> a` once and building its index pays
+for itself across every pair of `z`; a per-pair walk redoes that work each
+time. Reverted, but it identified the constraint: a fix has to amortise *and*
+avoid the intermediate, which no two-way arrangement does.
 
-So the shape of a real fix is now clearer than "implement Generic Join": it has
-to amortise. Meet-in-the-middle with a deliberately chosen split point —
-materialise the cheaper half, probe the other — rather than either extreme.
+**Three-way fusion does both.** `meet_compose3 x m y z` walks forward from the
+left endpoint through `x`, backward from the right through `y`, and asks
+whether `m` joins the two frontiers — all through indexes that already exist,
+with no intermediate built. Crucially it chooses **which frontier to iterate
+per pair, by size**: on a hub graph one side is the entire hub and the other a
+single element, and iterating the wrong one is the difference between a scan
+and a lookup.
 
-That attempt also produced the turn's sharpest process lesson. The structural
+| | unfused | fused | |
+|---|---|---|---|
+| triangle | 91 549 | 1 250 | 73.2× |
+| **4-cycle** | 278 499 | **1 250** | **222.8×** |
+
+The suite asserts the fused and unfused results agree, and that the answer is
+non-empty, because a 222× speedup that computes the wrong thing is worth
+nothing.
+
+Still not general: a 5-chain would need the same treatment again, and cycles
+through `fork` are untouched. But the shape is now known and the extension is
+mechanical rather than speculative.
+
+**The process lesson from the failed attempt outlasts it.** The structural
 version first reported **0 tuples touched**, because the new code probed
 indexes directly and nothing charged the counter — the identical blindness that
 had been fixed for set operations one commit earlier. An instrument has to be

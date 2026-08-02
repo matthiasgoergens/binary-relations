@@ -279,6 +279,12 @@ module Impl = struct
     | Fin a, Fin b, Fin c -> Fin (Relation.meet_compose a b c)
     | _ -> meet (x >> y) z
 
+  let meet_compose3 : type a m n b. (a, m) t -> (m, n) t -> (n, b) t -> (a, b) t -> (a, b) t =
+   fun x mid y z ->
+    match (x, mid, y, z) with
+    | Fin a, Fin m, Fin b, Fin c -> Fin (Relation.meet_compose3 a m b c)
+    | _ -> meet (x >> mid >> y) z
+
   let equal : type a b. (a, b) t -> (a, b) t -> bool =
    fun x y ->
     match (x, y) with
