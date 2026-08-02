@@ -1,0 +1,10 @@
+; Jane Street's splittable_random v0.17.0 tag PLUS the proposed
+; Intercept seam (the upstream PR this repo exists to justify; branch
+; tape-hooks-v017 of our splittable_random clone). Local edits beyond
+; the seam: a Base v0.18 (OxCaml overlay) compat block, and inline
+; test/bench blocks stripped (their APIs drifted in v0.18 previews).
+(library
+ (name sr_real)
+ (libraries base)
+ (preprocess
+  (pps ppx_sexp_message)))

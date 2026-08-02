@@ -1,0 +1,7 @@
+(library
+ (name ppx_quickcheck)
+ (kind ppx_deriver)
+ (enabled_if
+  (<> %{profile} oxcaml))
+ (libraries ppxlib ppx_quickcheck_expander)
+ (preprocess no_preprocessing))

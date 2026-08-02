@@ -1,0 +1,7 @@
+(executable
+ (name laws_main)
+ (libraries rel tape_engine base_quickcheck base stdio)
+ (preprocess
+  (pps ppx_sexp_conv ppx_let))
+ (flags
+  (:standard -warn-error -a)))
