@@ -5,6 +5,9 @@
     it is rebuilt, so an index amortises without anyone having to be clever
     about maintaining it.
 
+    (The index also stores shapes, per-file stats and a related-uid union-find;
+    "stored one way" below is about the {e occurrence mapping} specifically.)
+
     From [src/index-format/index_format.ml]:
 
     {[
@@ -19,8 +22,14 @@
     stored as a map in one direction. That direction answers "find references".
     Two other questions an editor asks constantly are not stored at all:
 
-    - {b what is defined at this location?} — the converse. Merlin recomputes
-      it from the typed buffer rather than from the index.
+    - {b what is defined at this location?} — the converse. It is not in the
+      index: a [Lid.t] carries a filename and a source range but no owning uid
+      ([lid.ml:10]), so location → uid could only be recovered by scanning
+      every uid entry. Merlin instead resolves a cursor position through the
+      typed environment and shapes ([locate.ml:864], [locate.ml:687]) and
+      consults the index only *after* it has a uid
+      ([occurrences.ml:175]). Independently confirmed by a cross-model review
+      of the merlin sources.
     - {b which definitions does this file use?} — needs the occurrences keyed
       by file, a third access path nobody has.
 
