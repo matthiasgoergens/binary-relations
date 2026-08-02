@@ -373,9 +373,18 @@ let fuse_meet p q z =
   | Some ipq, Some iz when Float.( <= ) iz.card ipq.card -> MeetComp (p, q, z)
   | _ -> Meet (Comp (p, q), z)
 
+(* Distributing a coreflexive over a fork, which is worth doing for the exact
+   reason distributing it over a meet is not: a fork GROWS its inputs and a
+   meet shrinks them, so filtering before a fork saves work and filtering
+   before a meet duplicates it. Measured: 36 000 tuples against 8 150 through
+   a fork (4.4x), and 5 250 against 8 025 through a meet — a loss, so that one
+   is deliberately absent. *)
 let rec fuse : type a b. (a, b) Symbolic.t -> (a, b) Symbolic.t =
  fun t ->
   match t with
+  | Comp ((Where _ as c), Fork (p, q)) -> Fork (fuse (Comp (c, p)), fuse (Comp (c, q)))
+  | Comp ((Meet (Id, _) as c), Fork (p, q)) -> Fork (fuse (Comp (c, p)), fuse (Comp (c, q)))
+  | Comp ((Meet (_, Id) as c), Fork (p, q)) -> Fork (fuse (Comp (c, p)), fuse (Comp (c, q)))
   | Meet (Comp (p, q), z) -> fuse_meet (fuse p) (fuse q) (fuse z)
   | Meet (z, Comp (p, q)) -> fuse_meet (fuse p) (fuse q) (fuse z)
   | Meet (x, y) -> Meet (fuse x, fuse y)

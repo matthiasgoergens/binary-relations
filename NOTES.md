@@ -393,13 +393,38 @@ rewrite that needed its absolute numbers would not be trustworthy; one that
 needs a comparison is. Tested: on `meet (small >> small) big` the planner
 declines to fuse.
 
-### Still not done
+### Still not done, and now measured
 
-This is not a WCO join engine. It handles one cyclic pattern; a query with a
-longer cycle, or a cyclic pattern built through `fork`, still materialises.
-Generic Join or Leapfrog Triejoin over the sorted pair sets would cover the
-general case, and Free Join is the more recent framing of how to combine that
-with the binary planner rather than bolting it alongside.
+This is not a WCO join engine, and the gap has a number on it. On a hub graph:
+
+| | unfused | fused | |
+|---|---|---|---|
+| triangle, `meet (a >> a) g` | 91 549 | 1 250 | **73.2×** |
+| 4-cycle, `meet (a >> a >> a) g` | 278 499 | 271 900 | **1.0×** |
+
+Fusion only removes the *outermost* composition, so on a longer chain the
+inner `a >> a` is still materialised and almost nothing is saved. Both figures
+are asserted in the suite, the second one deliberately — the gap should not be
+allowed to close or widen silently.
+
+**An attempt to close it made things worse, and the measurement said so.**
+Replacing the materialise-then-probe step with a *structural* probe — walking
+the term per pair of `z`, so no intermediate is ever built — measured **0.5×
+on the triangle and 0.8× on the 4-cycle**, i.e. a regression. The reason is
+amortisation: materialising `a >> a` once and building its index pays for
+itself across every pair of `z`, whereas a per-pair walk redoes that work each
+time. Reverted.
+
+So the shape of a real fix is now clearer than "implement Generic Join": it has
+to amortise. Meet-in-the-middle with a deliberately chosen split point —
+materialise the cheaper half, probe the other — rather than either extreme.
+
+That attempt also produced the turn's sharpest process lesson. The structural
+version first reported **0 tuples touched**, because the new code probed
+indexes directly and nothing charged the counter — the identical blindness that
+had been fixed for set operations one commit earlier. An instrument has to be
+extended every time work moves to a new code path, and the natural failure is
+silence, which reads as a win.
 
 ## Prior art: Oliveira, products and coreflexives
 
@@ -661,6 +686,13 @@ What makes it safe is that it needs *no estimate*: a filter only ever shrinks
 what it is composed with, so meeting its neighbour first is essentially always
 at least as good. Given how badly the estimates behave under skew, a rewrite
 justified without them is worth more than one that needs them.
+
+**Pushing a filter through a `fork` was measured and is a win — 4.4×** (36 000
+tuples against 8 150), and it is now done. The contrast with `meet` is the
+point, and it is structural rather than incidental: a fork *grows* its inputs
+while a meet *shrinks* them, so filtering before a fork saves work on both
+branches and filtering before a meet duplicates work the meet was about to
+avoid. Same rewrite, opposite verdicts, decided by measurement.
 
 **Pushing a filter through a `meet` was measured and is a loss**, so it is
 deliberately not implemented: distributing `p >> (a ∧ b)` into

@@ -113,6 +113,7 @@ comment. Numbers are tuples touched, from `Relation.tuples_touched`.
 | the scalar language covers ordinary business predicates | 10 of 14; 4 need the escape hatch |
 | fusing a meet into a composition, skewed triangle | 252 549 vs 2 050 tuples (123.2×) |
 | binding a filter to its neighbour before planning | 13 200 vs 971 tuples (13.6×) |
+| distributing a filter over a fork | 36 000 vs 8 150 tuples (4.4×) |
 
 Two of those are the ones whose failure mode is a wrong answer rather than a
 slow one, so they are attacked rather than demonstrated: 400 randomly generated

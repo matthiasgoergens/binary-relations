@@ -951,7 +951,81 @@ let test_filter_pushdown_gap () =
      instead of one and the meet has to intersect the results anyway. *)
   check "distributing a filter over a meet is a loss, so no rewrite for it"
     (cost_inside > cost_outside);
-  printf "   => distributing costs more; left as written\n" 
+  printf "   => distributing costs more; left as written\n";
+
+  (* And through a fork, where the shape of the argument is the opposite: a
+     fork GROWS its inputs, a meet shrinks them, so the same rewrite should go
+     the other way. Worth checking rather than assuming. *)
+  let module F (R : Algebra.RELATIONS) = struct
+    open R
+
+    let keep v = R.V.( <. ) v (R.V.int_ 5)
+    let outside = where_ keep >> fork (of_relation c) (of_relation d)
+    let inside = fork (where_ keep >> of_relation c) (where_ keep >> of_relation d)
+  end in
+  let module Sf = F (Symbolic) in
+  let f0, cost_f_out = measure2 Sf.outside in
+  let f1, cost_f_in = measure2 Sf.inside in
+  printf "   filter before a fork  : %d tuples\n" cost_f_out;
+  printf "   distributed over both : %d tuples  (%.1fx)\n" cost_f_in
+    (Float.of_int cost_f_out /. Float.of_int (Int.max 1 cost_f_in));
+  check "distributing a filter over a fork preserves the answer" (Relation.equal f0 f1);
+  check "and it is worth a rewrite, unlike the meet case" (cost_f_in * 2 < cost_f_out);
+  let f2, cost_f_planned = measure2 (Plan.optimise Sf.outside) in
+  printf "   planner               : %d tuples  (%.1fx)\n" cost_f_planned
+    (Float.of_int cost_f_out /. Float.of_int (Int.max 1 cost_f_planned));
+  check "the planner distributes over the fork" (Relation.equal f0 f2);
+  check "and reaches the hand-written cost" (cost_f_planned <= cost_f_in)
+
+(* ------------------------------------------------------------------ *)
+(* How bad is a cycle longer than a triangle?                          *)
+(* ------------------------------------------------------------------ *)
+
+(* [meet_compose] fuses [meet (a >> b) c]. On a longer cycle -- [meet (a >> b
+   >> c) d] -- the fusion still applies, but only to the OUTERMOST
+   composition: [a >> b] is materialised first and then fused against [d]. A
+   general worst-case-optimal join would avoid every intermediate. Measure how
+   much that costs before building one. *)
+let test_long_cycle_gap () =
+  section "Cycles longer than a triangle: how much is left on the table?";
+  let h = 300 in
+  let hub =
+    List.init h ~f:(fun i -> (i + 1, 0))
+    @ List.init h ~f:(fun j -> (0, j + 1))
+    @ List.init 10 ~f:(fun i -> (i + 1, i + 2))
+  in
+  let g = Relation.of_list hub in
+  let module Q (R : Algebra.RELATIONS) = struct
+    open R
+
+    let triangle = meet (of_relation g >> of_relation g) (of_relation g)
+    let square = meet (of_relation g >> of_relation g >> of_relation g) (of_relation g)
+  end in
+  let module S = Q (Symbolic) in
+  let measure t =
+    ignore (Relation.stats g : Relation.stats);
+    Relation.reset_counters ();
+    let r = Symbolic.run t in
+    (r, Relation.tuples_touched ())
+  in
+  let _, tri_plain = measure S.triangle in
+  let _, tri_fused = measure (Plan.optimise S.triangle) in
+  let _, sq_plain = measure S.square in
+  let sq_planned = Plan.optimise S.square in
+  let _, sq_fused = measure sq_planned in
+  printf "   triangle : %6d -> %6d  (%.1fx)\n" tri_plain tri_fused
+    (Float.of_int tri_plain /. Float.of_int (Int.max 1 tri_fused));
+  printf "   4-cycle  : %6d -> %6d  (%.1fx)\n" sq_plain sq_fused
+    (Float.of_int sq_plain /. Float.of_int (Int.max 1 sq_fused));
+  printf "   4-cycle planned as: %s\n" (Symbolic.to_string sq_planned);
+  (* Recorded as an assertion so the gap cannot silently close or widen: the
+     triangle is fused well, the 4-cycle is barely touched, because fusion
+     only removes the OUTERMOST composition and [a >> a] is still built. *)
+  check "the triangle is fused well" (tri_fused * 10 < tri_plain);
+  check "the longer cycle is not: this is the remaining WCOJ gap"
+    (sq_fused * 2 > sq_plain)
+
+
 
 (* ------------------------------------------------------------------ *)
 
@@ -971,5 +1045,6 @@ let () =
   test_fork_fusion_is_strict ();
   test_query_surface ();
   test_filter_pushdown_gap ();
+  test_long_cycle_gap ();
   printf "\n%d checks, %d failures\n" !checks !failures;
   if !failures > 0 then exit 1
