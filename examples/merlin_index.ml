@@ -28,6 +28,40 @@
     integration would link [Index_format], which drags in the compiler libs)
     and compares the two implementations on all three questions.
 
+    {2 The comparison that matters is how the code reads}
+
+    At merlin's index sizes the performance question is mostly "does this stay
+    competitive with hand-rolling", and it does. What is worth looking at is
+    what each version {e says}:
+
+    {v
+      Q2, what is defined at this location?
+
+        map        Map.fold t ~init:[] ~f:(fun ~key ~data acc ->
+                     if List.mem data o ~equal:Poly.equal then key :: acc else acc)
+
+        relation   Relation.preimage t o
+
+      Q3, which definitions does this file use?
+
+        map        Map.fold t ~init:[] ~f:(fun ~key ~data acc ->
+                     if List.exists data ~f:(fun o -> String.equal o.file file)
+                     then key :: acc else acc)
+
+        relation   Relation.preimage (Relation.map_rng t ~f:(fun o -> o.file)) file
+    v}
+
+    The map versions are not hard, but each one is a hand-rolled scan carrying
+    its own predicate, and the predicate is where a silent bug lives: compare
+    the wrong field, use the wrong equality, forget that [data] is a list and
+    reach for [=] on it. Nothing in the type stops any of that. The relational
+    versions have no predicate to get wrong — [preimage] is the converse and
+    says so.
+
+    That is the real claim: not that this is faster, but that "look it up the
+    other way" is spelled as looking it up the other way, and a reviewer can
+    see it is right without reading a loop.
+
     Run with [dune exec examples/merlin_index.exe]. *)
 
 open! Core
@@ -172,4 +206,8 @@ let () =
     after_forward after_backward (Rel_.Relation.index_builds ());
   printf
     "\n   Both directions are lookups on one value. The map answers one question\n\
-    \   and scans for the other two; the third access path does not exist at all.\n"
+    \   and scans for the other two; the third access path does not exist at all.\n";
+  printf
+    "\n   At these sizes the timings only need to show no regression, and they do.\n\
+    \   The argument is the code: 'preimage t o' against a fold carrying a\n\
+    \   hand-written predicate, which is where a silent bug would live.\n"
