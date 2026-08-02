@@ -135,7 +135,14 @@ is the merlin case in miniature.
 
 Two things the spike settled that reading could not.
 
-**The canonical pair set has to go.** A set of `'a * 'b` needs a comparator for
+**~~The canonical pair set has to go.~~ Also refuted, by the same spike — see
+below.** The reasoning was identical to the products one and fails identically:
+the pair set built in `product-witness-spike/` is a set of `Cheap.t * int`,
+i.e. exactly a canonical pair set carrying a real comparator. The
+representation is a free choice again, not a forced one. Original reasoning
+kept for the record:
+
+A set of `'a * 'b` needs a comparator for
 the pair type, whose witness must be a function of the two element witnesses.
 Base cannot express that: `Comparator.t` is private, so one cannot be
 constructed at a chosen witness, and `Comparator.make` mints a *fresh*
