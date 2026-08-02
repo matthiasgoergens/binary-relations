@@ -91,16 +91,28 @@ let over_40 = of_relation people >> where_ (fun age -> age >. int_ 40)
 Everything below is asserted by the test suite as a measurement, not as a
 comment. Numbers are tuples touched, from `Relation.tuples_touched`.
 
+> **All figures below were re-measured on 2026-08-02** after the cost counter
+> was found to be blind to `meet`, `union`, `diff` and `filter` — it charged
+> nothing for any set operation, so every measurement involving one was
+> understated. Several published numbers moved: the semi-naive closure win from
+> 21.5× to 16.0×, incremental maintenance from 751× to 501×, filter pushdown
+> from 39.8× to 13.6×. The counter now charges `min` of the two cardinalities,
+> which matches Base's divide-and-conquer set operations far better than the
+> sum and still understates by a log factor — deliberately, since that is the
+> conservative direction for every ratio claimed here.
+
+
 | claim | measurement |
 |---|---|
 | an index is built once and never invalidated | 1 build for 100 lookups; the second direction is a second build |
 | converse does no index work | 0 additional builds over 100 lookups on the converse |
-| semi-naive closure beats the naive fixpoint | 900 vs 19 315 on a 30-link chain (21.5×) |
+| semi-naive closure beats the naive fixpoint | 1 770 vs 28 305 on a 30-link chain (16.0×) |
 | re-association beats the order written | 4 vs 1 502 on a 500×500×1 chain (376×) |
-| maintaining a view beats recomputing it | 4 vs 3 004 on a one-tuple insert (751×) |
-| an unchanged sibling subtree is not recomputed | 2 tuples in the steady state |
+| maintaining a view beats recomputing it | 6 vs 3 004 on a one-tuple insert (501×) |
+| an unchanged sibling subtree is not recomputed | 3 tuples in the steady state |
 | the scalar language covers ordinary business predicates | 10 of 14; 4 need the escape hatch |
-| fusing a meet into a composition, skewed triangle | 251 539 vs 2 050 tuples (122.7×) |
+| fusing a meet into a composition, skewed triangle | 252 549 vs 2 050 tuples (123.2×) |
+| binding a filter to its neighbour before planning | 13 200 vs 971 tuples (13.6×) |
 
 Two of those are the ones whose failure mode is a wrong answer rather than a
 slow one, so they are attacked rather than demonstrated: 400 randomly generated

@@ -372,8 +372,8 @@ it pays. `Plan` introduces it under a guard.
 
 | triangle over | edges | intermediate | output | tuples touched | |
 |---|---|---|---|---|---|
-| uniform random graph | 1 963 | 15 581 | 846 | 21 232 → 19 550 | 1.1× |
-| one high-degree hub | 1 010 | 250 021 | 30 | 251 539 → 2 050 | **122.7×** |
+| uniform random graph | 1 963 | 15 581 | 846 | 23 195 → 19 550 | 1.2× |
+| one high-degree hub | 1 010 | 250 021 | 30 | 252 549 → 2 050 | **123.2×** |
 
 **The win is under skew, and on uniform data there is essentially none.** That
 is the same boundary the cardinality estimator failed at, in the same session:
@@ -624,8 +624,8 @@ downstream moved.
 | # | spike | status |
 |---|---|---|
 | 4 | how big must `v` be? | **done** — 4 of 14 predicates need `opaque` (29%), and the projection finding above. `examples/predicates.ml` |
-| 6 | semi-naive evaluation | **done** — 21.5× fewer tuples touched than the naive fixpoint on a 30-link chain |
-| 7 | `Incremental` as a second interpreter | **done** — 751× on a one-tuple insert; the deletion boundary is real and documented |
+| 6 | semi-naive evaluation | **done** — 16.0× fewer tuples touched than the naive fixpoint on a 30-link chain |
+| 7 | `Incremental` as a second interpreter | **done** — 501× on a one-tuple insert; the deletion boundary is real and documented |
 | 8 | lazy automatic index selection | **done** — and it collapsed into index *building*, see above |
 | 1 | OxCaml modes for relational contraction | **done, negative, as expected.** Reachable once `rel` became Base-only. `once`/`unique` do not constrain a data-shaped term used twice; `once` does forbid a second use of a *closure*-shaped one — but the `copy` that contraction needs cannot then be written, because writing it requires exactly the second use being forbidden. The modality is affine and contraction is the rule affineness deletes; the way back in linear logic is `!`, whose OxCaml counterpart (`many`) restores unrestricted duplication rather than mediated duplication. Full write-up and probes in `~/prog/binary-relations-notes/spike1-oxcaml/` |
 
@@ -652,9 +652,9 @@ first, on a 400 × 800 chain with a filter keeping about 20 of 800 values:
 
 | | tuples touched |
 |---|---|
-| as written, unplanned | 6 800 |
-| filter bound to its neighbour by hand | 171 |
-| **planner, after the change** | **171** — 39.8× |
+| as written, unplanned | 13 200 |
+| filter bound to its neighbour by hand | 971 |
+| **planner, after the change** | **971** — 13.6× |
 
 The rewrite binds a coreflexive to whatever precedes it before the DP runs.
 What makes it safe is that it needs *no estimate*: a filter only ever shrinks
@@ -662,8 +662,38 @@ what it is composed with, so meeting its neighbour first is essentially always
 at least as good. Given how badly the estimates behave under skew, a rewrite
 justified without them is worth more than one that needs them.
 
-Still not done: pushing filters through `meet` and `fork`, which is a
-different problem and unmeasured.
+**Pushing a filter through a `meet` was measured and is a loss**, so it is
+deliberately not implemented: distributing `p >> (a ∧ b)` into
+`(p >> a) ∧ (p >> b)` costs 8 025 tuples against 5 250 for the original,
+because it filters two relations instead of one and the meet still has to
+intersect the results. The suite asserts the negative so it cannot quietly
+stop being true. `fork` remains unmeasured.
+
+## The cost counter was blind to set operations
+
+Found while measuring the `meet` case above, which reported 0 tuples on both
+sides. `Relation.inter`, `union`, `diff` and `filter` never called `touch`, so
+the counter — the unit every performance claim in this repo is stated in — saw
+nothing for any of them.
+
+Correcting it moved several published numbers, all of which have been updated:
+the semi-naive closure win from 21.5× to **16.0×**, incremental maintenance
+from 751× to **501×**, filter pushdown from 39.8× to **13.6×**. The fusion and
+planner numbers barely moved, because those paths are dominated by composition,
+which was always counted.
+
+The charge is `min` of the two cardinalities rather than the sum. Base's set
+operations are divide-and-conquer, about m·log(n/m + 1) for m ≤ n, so a union
+against a singleton is logarithmic, not linear; charging the sum overstated
+incremental maintenance by two orders of magnitude and made a steady-state
+update look like 504 tuples when the real work is a handful. `min` still
+understates by the log factor, which is the conservative direction for every
+ratio claimed here.
+
+The general lesson is worth more than the numbers: **an instrument that
+silently reads zero for a whole class of work will flatter whichever side of a
+comparison uses that work more.** The blind spot was found only because a
+measurement came back 0 vs 0 and was too obviously degenerate to accept.
 
 ## The surface, and the fragment it covers
 
@@ -736,7 +766,7 @@ framing exists to avoid.
   queries raise `Unsupported`.
 - No worst-case-optimal joins; the planner does binary joins only.
 - Filter pushdown through `meet`/`fork` is not implemented. Pushing a
-  coreflexive inward through a composition chain **is**, and was worth 39.8×
+  coreflexive inward through a composition chain **is**, and was worth 13.6×
   on the measured case — see below.
 - **Transients: measured, and not worth building.** The brief budgets for an
   O(1)-in/out mutable builder behind an immutable interface. On 50 000 pairs

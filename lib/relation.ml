@@ -194,13 +194,36 @@ let compose x y =
            touch (Set.length as_);
            Set.fold as_ ~init:acc ~f:(fun acc a -> Set.add acc (a, c)))))
 
+(* Until now these charged nothing at all, which made the cost counter blind
+   to every meet, union and filter in the library — so any measurement
+   involving one of them was understated, sometimes by a lot.
+
+   The charge is [min] of the two cardinalities, not the sum. Base's set
+   operations are divide-and-conquer, costing about m·log(n/m + 1) for m ≤ n,
+   so a union against a singleton is logarithmic rather than linear: charging
+   the sum would overstate incremental maintenance enormously, which is
+   precisely the case this library cares about. [min] still understates by the
+   log factor, and that bias is deliberate — it is the conservative direction
+   for the claims made here, since every "incremental beats recompute" number
+   is a ratio in which the incremental side carries the small operand. *)
 let union x y =
-  if x.card_ = 0 then y else if y.card_ = 0 then x else of_pairs (Set.union (pairs x) (pairs y))
+  if x.card_ = 0 then y
+  else if y.card_ = 0 then x
+  else (
+    touch (Int.min x.card_ y.card_);
+    of_pairs (Set.union (pairs x) (pairs y)))
 
 let inter x y =
-  if x.card_ = 0 || y.card_ = 0 then empty else of_pairs (Set.inter (pairs x) (pairs y))
+  if x.card_ = 0 || y.card_ = 0 then empty
+  else (
+    touch (Int.min x.card_ y.card_);
+    of_pairs (Set.inter (pairs x) (pairs y)))
 
-let diff x y = if y.card_ = 0 then x else of_pairs (Set.diff (pairs x) (pairs y))
+let diff x y =
+  if y.card_ = 0 then x
+  else (
+    touch (Int.min x.card_ y.card_);
+    of_pairs (Set.diff (pairs x) (pairs y)))
 let subset x y = Set.is_subset (pairs x) ~of_:(pairs y)
 let equal x y = x.card_ = y.card_ && Set.equal (pairs x) (pairs y)
 let compare x y = Set.compare_direct (pairs x) (pairs y)
@@ -208,7 +231,9 @@ let compare x y = Set.compare_direct (pairs x) (pairs y)
 let identity_on s =
   of_pairs (Set.fold s ~init:Set.Poly.empty ~f:(fun acc a -> Set.add acc (a, a)))
 
-let filter r ~f = of_pairs (Set.filter (pairs r) ~f:(fun (a, b) -> f a b))
+let filter r ~f =
+  touch r.card_;
+  of_pairs (Set.filter (pairs r) ~f:(fun (a, b) -> f a b))
 let filter_dom r ~f = filter r ~f:(fun a _ -> f a)
 let filter_rng r ~f = filter r ~f:(fun _ b -> f b)
 

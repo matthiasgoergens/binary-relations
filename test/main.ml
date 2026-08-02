@@ -917,7 +917,41 @@ let test_filter_pushdown_gap () =
   check "all three agree on the answer"
     (Relation.equal r0 r1 && Relation.equal r1 r2);
   check "the planner now closes the gap it used to leave open"
-    (cost_planned <= cost_hand)
+    (cost_planned <= cost_hand);
+
+  (* The other direction: a filter in front of a meet. Distributing it over
+     both branches is sound -- [p >> (a ∧ b) = (p >> a) ∧ (p >> b)] -- and
+     shrinks both sides before they are intersected. Measure before writing
+     the rule. *)
+  let c = Relation.of_list (List.init 4000 ~f:(fun i -> (i % 900, i % 700))) in
+  let d = Relation.of_list (List.init 4000 ~f:(fun i -> (i % 900, i % 650))) in
+  let module M (R : Algebra.RELATIONS) = struct
+    open R
+
+    let keep v = R.V.( <. ) v (R.V.int_ 5)
+    let filter_outside = where_ keep >> meet (of_relation c) (of_relation d)
+    let filter_inside = meet (where_ keep >> of_relation c) (where_ keep >> of_relation d)
+  end in
+  let module Sm = M (Symbolic) in
+  let measure2 t =
+    ignore (Relation.stats c : Relation.stats);
+    ignore (Relation.stats d : Relation.stats);
+    Relation.reset_counters ();
+    let r = Symbolic.run t in
+    (r, Relation.tuples_touched ())
+  in
+  let m0, cost_outside = measure2 Sm.filter_outside in
+  let m1, cost_inside = measure2 Sm.filter_inside in
+  printf "   filter before a meet  : %d tuples\n" cost_outside;
+  printf "   distributed over both : %d tuples  (%.1fx)\n" cost_inside
+    (Float.of_int cost_outside /. Float.of_int (Int.max 1 cost_inside));
+  check "distributing a filter over a meet preserves the answer" (Relation.equal m0 m1);
+  (* Measured negative, and recorded as an assertion so it cannot quietly stop
+     being true: distributing costs MORE, because it filters two relations
+     instead of one and the meet has to intersect the results anyway. *)
+  check "distributing a filter over a meet is a loss, so no rewrite for it"
+    (cost_inside > cost_outside);
+  printf "   => distributing costs more; left as written\n" 
 
 (* ------------------------------------------------------------------ *)
 
