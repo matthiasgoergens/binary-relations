@@ -1,13 +1,29 @@
 (** Layer 1: the relation value — a finite binary relation together with
     lazily built, memoised indexes and exact statistics.
 
-    This is where the brief's central claim lives. Under immutability an index
-    is a {e pure function of the relation}, so it can be computed on first use
-    and {e never invalidated}. There is no [:db/index] schema decision to make,
-    as there is in DataScript, and no cache to keep coherent. The same argument
-    applies to statistics: cardinality, distinct counts and fan-out are pure
-    functions of the value, so the planner's inputs are exact rather than
-    sampled, and cannot go stale.
+    Under immutability an index is a {e pure function of the relation}, so it
+    can be computed on first use and {e never invalidated}. There is no
+    [:db/index] schema decision to make, as there is in DataScript, and no
+    cache to keep coherent.
+
+    {b What that does and does not buy.} It removes a class of bug — a stale or
+    incoherent index — and the machinery that would otherwise prevent one. It
+    does {e not} make an index cheap. Building one is O(n) whatever the
+    language says about mutation, and the property that actually decides
+    whether that cost is worth paying is how long the value stays frozen
+    relative to how often it is queried. An index amortises over a long
+    read-mostly lifetime, and language-level immutability is silent on that:
+    a program can rebuild a relation on every tick and never amortise
+    anything, while a mutable table that is frozen and then read a million
+    times amortises perfectly. Immutability means a freshly bound variable
+    each time, which is a statement about the language, not about churn.
+
+    This library has measured both halves of that. Maintaining an incremental
+    view costs 3 tuples in the steady state but 503 the first time a given
+    intermediate is touched, because each change mints a fresh intermediate
+    with no index; and the M5 correction turned on the same point — the
+    intermediates a planner most wants to reason about are exactly the ones
+    just created, so the memoisation barely reaches them. See [NOTES.md].
 
     {2 Access-path independence}
 
@@ -173,11 +189,14 @@ val symmetric_diff_fwd :
     | `Right of 'b Set.Poly.t
     | `Unequal of 'b Set.Poly.t * 'b Set.Poly.t ])
   list
-(** Keys whose forward image differs, via [Map.symmetric_diff]: cheap because
-    the maps are immutable and share structure, so the traversal skips whole
-    subtrees that are physically equal. Provided because this is the primitive
-    [Incr_map] is built on, and therefore the one an incremental interpreter
-    over relations needs. *)
+(** Keys whose forward image differs, via [Map.symmetric_diff]. The traversal
+    skips whole subtrees that are physically equal, so it is cheap {e when the
+    two maps share structure} — which they do when one was derived from the
+    other, and do not when they were built independently with the same
+    contents. Immutability is what makes that sharing {e safe}; it is not what
+    makes it cheap. Provided because this is the primitive [Incr_map] is built
+    on, and therefore the one an incremental interpreter over relations
+    needs. *)
 
 (** {2 Instrumentation}
 

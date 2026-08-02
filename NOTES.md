@@ -426,6 +426,63 @@ had been fixed for set operations one commit earlier. An instrument has to be
 extended every time work moves to a new code path, and the natural failure is
 silence, which reads as a win.
 
+## What immutability actually buys, and what it does not
+
+The brief's premises include "all relations immutable", and several arguments
+were built on it. One of them — that it hands a planner perfect information —
+has already been withdrawn and re-measured. The premise needs a narrower
+statement still, and it was Matthias's:
+
+> Indices become free when you have data that's frozen in the long run.
+> Mutability can still mean lots and lots of churn. On the language level you
+> just get a freshly bound variable each time — but that's a detail on the
+> language level.
+
+That is right, and it is sharper than "immutability makes indexes cheap",
+which is what parts of this repo were implying.
+
+**The operative property is the read-to-change ratio over a value's lifetime,
+not the presence or absence of mutation in the language.** An index costs O(n)
+to build regardless; whether that is worth paying depends on how many queries
+run against the value before it changes. Language-level immutability says
+nothing about that. A program in an immutable language can rebuild a relation
+on every tick and amortise nothing; a mutable table that is frozen and then
+read a million times amortises perfectly. And the gap between the two is not
+even visible in the source — a sufficiently good compiler will implement
+linearly used immutable values as in-place mutation, which is exactly what
+OxCaml's uniqueness mode does and what this design's own "immutable interface,
+mutable implementation" premise assumes.
+
+**What immutability does buy is a class of bug, not a cost.** An index of an
+immutable value cannot go stale, so memoising it is unconditionally safe and
+there is no invalidation machinery, no coherence protocol, and no way to
+observe a wrong answer from a cached index. That is worth having. It is a
+correctness and simplicity property, and it should be argued for on those
+terms rather than smuggled in as a performance claim.
+
+**This repo has measured both halves without naming them.**
+
+- Incremental maintenance costs **3 tuples** in the steady state but **503**
+  the first time a given intermediate is touched, because every change mints a
+  fresh intermediate carrying no index. That is churn defeating amortisation,
+  in this library, at the scale of a single update.
+- The M5 correction landed on the same point from the other side: every
+  derived relation is a fresh value with no cached statistics, so *the
+  intermediates a planner most wants to reason about are exactly the ones just
+  created*. Memoisation barely reaches them.
+
+Both were recorded as local surprises. They are the same fact, and the fact is
+about churn, not about immutability.
+
+**Where this leaves the design.** Nothing to change in the code: the values
+this library is built for — application state, org charts, a loaded dataset —
+really are frozen-in-the-long-run and read many times, which is the regime
+where the index story works. What changes is the argument. The claim is not
+"immutability makes this fast"; it is "this workload is read-mostly, which is
+what makes indexes pay, and immutability is what makes caching them safe
+without any coherence machinery". Two separate things, and only the second is
+about immutability.
+
 ## Prior art: Oliveira, products and coreflexives
 
 Reading queue item 3, and unlike the Kahl episode this one was done *before*
