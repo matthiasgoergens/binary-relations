@@ -26,7 +26,7 @@ Five layers, bottom to top:
 
 | | | |
 |---|---|---|
-| 0 | persistent sorted structures | `Core.Map` / `Core.Set` — [not purpose-built, and that is a finding](./NOTES.md#layer-0-not-built-and-that-is-the-finding) |
+| 0 | persistent sorted structures | `Base.Map` / `Base.Set` — [not purpose-built, and that is a finding](./NOTES.md#layer-0-not-built-and-that-is-the-finding) |
 | 1 | the relation value | `lib/relation.ml` — pairs plus lazily built, memoised indexes and exact statistics |
 | 2 | the algebra | `lib/algebra.ml` — semigroupoid → category → allegory → union → division → Kleene, plus products and the scalar language. The ladder starts below the category because [the identity is where the subject divides](./NOTES.md#what-this-changed) |
 | 3 | interpreters | `lib/eval.ml`, `lib/symbolic.ml`, `lib/incr.ml` |
@@ -60,7 +60,7 @@ let reachable_dept =
     let* report = step manages boss in
     let* d = step dept report in
     ret d)
-(* compiles to ((id >> «4») >> «4»), planned to («4» >> «4») *)
+(* compiles to («4» >> «4») *)
 ```
 
 Writing a *cycle* is what makes this more than sugar — it produces exactly the
@@ -74,7 +74,7 @@ let triangles =
     let* z = step edges y in
     let* () = constrain edges x z in   (* closes the cycle *)
     ret z)
-(* compiles to (((id >> «5») >> «5») ∧ «5»), planned to ((«5» ⋈ «5») ∧ «5») *)
+(* compiles to ((«5» >> «5») ∧ «5»), planned to ((«5» ⋈ «5») ∧ «5») *)
 ```
 
 Filtering needs no combinator of its own — it is composition with a
@@ -130,7 +130,7 @@ bespoke test framework.
 opam switch create . ocaml-base-compiler.5.3.0 --no-install
 opam install --switch=. core incremental incr_map base_quickcheck ppx_jane
 dune build
-dune exec test/main.exe          # 96 checks, including 47 property-checked laws
+dune exec test/main.exe          # 136 checks, including 50 property-checked laws
 dune exec examples/org_chart.exe # closure, both directions, division, live updates
 dune exec examples/predicates.exe # spike 4: how big must the scalar language be?
 ```
@@ -150,8 +150,20 @@ scope with `Core`. See
 M0–M5 of the brief are in. The library works, the demo works, and the
 differentiator works.
 
-Not done, with reasons in [`NOTES.md`](./NOTES.md#not-done): no surface syntax
-layer, no general worst-case-optimal join (one cyclic shape is fused, longer
-cycles still materialise), no filter pushdown through `meet`/`fork`, and no
-transients. All five live spikes are now closed; spike 1 came out negative, as
-the brief predicted.
+All five live spikes are closed; spike 1 came out negative, as the brief
+predicted.
+
+Not done, with reasons in [`NOTES.md`](./NOTES.md#not-done):
+
+- **No general worst-case-optimal join.** Cycles of length two and three fuse;
+  a longer chain, or a cycle built through `fork`, still materialises.
+- **Filter pushdown is partial by measurement, not by omission.** Into a
+  composition chain and through a `fork`, yes. Through a `meet`, no — it was
+  measured and is a *loss*, because a fork grows its inputs while a meet
+  shrinks them.
+- **No transients**, also by measurement: bulk and one-at-a-time construction
+  are within 1.2× of each other, so there is no per-insert rebuild for a
+  transient to remove.
+- **The surface covers a fragment.** Paths, cycle-closing atoms, and cores
+  resolved by bounded branching; a disconnected *and* unconstrained answer
+  variable still raises.
