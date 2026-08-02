@@ -34,12 +34,34 @@ The reason DataScript's constraint does not transfer is that its sorted set is
 a set of *datoms* compared on a rotating subset of four fields; ours is a set
 of pairs. Try the stock thing first.
 
-**What would make a purpose-built structure worth it later:** the pair set and
-the two indexes are three separate structures over the same data. A structure
-that let the indexes share the pair set's spine would cut allocation by
-roughly a third and make an index build a traversal rather than a rebuild.
-That is a measured optimisation to reach for when allocation shows up in a
-profile, not a prerequisite.
+**What would make a purpose-built structure worth it — now measured, and the
+answer is sharper than the guess.** The original note here supposed that
+letting the indexes share the pair set's spine would help. Half of that is
+now demonstrated and half is refuted.
+
+The pair set is sorted lexicographically, so all pairs sharing a *left*
+element are contiguous and their right elements strictly increasing — exactly
+the precondition Base's sorted-input constructors want. Building the forward
+index as one grouping pass instead of `n` separate `Map.update` calls is worth
+**about 25%** (3 runs each, non-overlapping ranges):
+
+| | before | after |
+|---|---|---|
+| forward index, 50 000 pairs | 10.2–10.7 ms | **7.2–8.5 ms** |
+| backward index | 12.9–13.3 ms | 12.6–13.3 ms |
+
+The backward index gets nothing, because the pairs are in the wrong order for
+it. Reordering first *was* tried and **measured slower** — 13.1 ms to 18.4 ms —
+since mapping to a fresh array and sorting it under polymorphic comparison
+costs more than the tree insertions it saves. That attempt was reverted, and
+the asymmetry in `Relation` is deliberate rather than an oversight.
+
+So the useful conclusion is not "share the spine" but: **a layer-0 structure
+would have to hold the pairs in both orders.** Then both directions are a
+grouping pass and neither pays for a sort. That is a different and more
+specific design than the one this file guessed at, and it now has a number
+behind it: the two indexes together still cost more than constructing the
+relation.
 
 ## Ordering is structural
 

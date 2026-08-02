@@ -40,13 +40,60 @@ let fwd r = Lazy.force r.fwd_
 let bwd r = Lazy.force r.bwd_
 let to_list r = Set.to_list (pairs r)
 
-let build_index ~key ~elt ps =
+(* Building an index from a run-sorted array.
+
+   The pair set is already sorted lexicographically, so all pairs sharing a
+   left element are contiguous and their right elements are strictly
+   increasing. That is exactly the precondition the sorted-input constructors
+   want, so an index is a single grouping pass rather than [n] separate
+   [Map.update] calls into a tree that rebalances on each one.
+
+   Measured on 50 000 pairs before this change: the two indexes together cost
+   183% of constructing the relation. *)
+let index_of_sorted_array arr =
+  let n = Array.length arr in
+  let entries = ref [] in
+  let i = ref 0 in
+  while !i < n do
+    let k = fst arr.(!i) in
+    let j = ref !i in
+    while !j < n && Poly.equal (fst arr.(!j)) k do
+      Int.incr j
+    done;
+    let start = !i and len = !j - !i in
+    (* Strictly increasing within the run, because the pair set is a set. *)
+    let elts =
+      Set.Poly.of_increasing_iterator_unchecked ~len ~f:(fun t -> snd arr.(start + t))
+    in
+    entries := (k, elts) :: !entries;
+    i := !j
+  done;
+  (* Keys come out strictly increasing, run by run. *)
+  Or_error.ok_exn (Map.Poly.of_increasing_sequence (Sequence.of_list (List.rev !entries)))
+
+let build_fwd ps =
   Int.incr index_build_count;
   touch (Set.length ps);
-  Set.fold ps ~init:Map.Poly.empty ~f:(fun acc p ->
-    Map.update acc (key p) ~f:(function
-      | None -> Set.Poly.singleton (elt p)
-      | Some s -> Set.add s (elt p)))
+  index_of_sorted_array (Set.to_array ps)
+
+(* The backward index cannot use the same trick: the pair set is sorted by the
+   LEFT element, so the runs it needs are not contiguous. Reordering first was
+   tried and measured slower than what it replaced — 13.1 ms to 18.4 ms on
+   50 000 pairs — because mapping to a fresh array and sorting it with
+   polymorphic comparison costs more than the tree insertions it saves. So this
+   direction keeps the straightforward fold, and the asymmetry is deliberate
+   rather than an oversight.
+
+   This is the honest shape of the "purpose-built layer 0" idea: a structure
+   holding the pairs in BOTH orders would make both directions a grouping pass,
+   and that, not a cleverer build from one order, is what would pay. *)
+let build_bwd ps =
+  Int.incr index_build_count;
+  touch (Set.length ps);
+  Set.fold ps ~init:Map.Poly.empty ~f:(fun acc (a, b) ->
+    Map.update acc b ~f:(function
+      | None -> Set.Poly.singleton a
+      | Some s -> Set.add s a))
 
 let index_stats fwd bwd card =
   let widest m = Map.fold m ~init:0 ~f:(fun ~key:_ ~data acc -> Int.max acc (Set.length data)) in
@@ -67,8 +114,8 @@ let of_pairs ps =
     {
       pairs_ = lazy ps;
       card_ = Set.length ps;
-      fwd_ = lazy (build_index ~key:fst ~elt:snd ps);
-      bwd_ = lazy (build_index ~key:snd ~elt:fst ps);
+      fwd_ = lazy (build_fwd ps);
+      bwd_ = lazy (build_bwd ps);
       stats_ = lazy (index_stats (Lazy.force r.fwd_) (Lazy.force r.bwd_) (Set.length ps));
     }
   in
