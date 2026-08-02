@@ -879,6 +879,47 @@ let test_query_surface () =
   check "and past the candidate limit it refuses rather than exploding" unsupported
 
 (* ------------------------------------------------------------------ *)
+(* Is there a filter-pushdown win to be had?                           *)
+(* ------------------------------------------------------------------ *)
+
+(* A coreflexive has no statistics, so the interval DP treats it as a barrier
+   and never re-associates across it: [a >> b >> where p] is planned exactly as
+   written, building all of [a >> b] and then discarding most of it. Measure
+   the gap before writing a rule for it. *)
+let test_filter_pushdown_gap () =
+  section "Filter pushdown: measuring the gap first";
+  let n = 400 in
+  let a = Relation.of_list (List.init n ~f:(fun i -> (i, i % 50))) in
+  let b = Relation.of_list (List.init (n * 2) ~f:(fun i -> (i % 50, i))) in
+  let module Q (R : Algebra.RELATIONS) = struct
+    open R
+
+    (* Keeps roughly 20 of b's 800 right-hand values. *)
+    let keep v = R.V.( >. ) v (R.V.int_ 780)
+    let as_written = of_relation a >> of_relation b >> where_ keep
+    let pushed = of_relation a >> (of_relation b >> where_ keep)
+  end in
+  let module S = Q (Symbolic) in
+  let measure t =
+    ignore (Relation.stats a : Relation.stats);
+    ignore (Relation.stats b : Relation.stats);
+    Relation.reset_counters ();
+    let r = Symbolic.run t in
+    (r, Relation.tuples_touched ())
+  in
+  let r0, cost_naive = measure S.as_written in
+  let r1, cost_planned = measure (Plan.optimise S.as_written) in
+  let r2, cost_hand = measure S.pushed in
+  printf "   as written, unplanned : %d tuples\n" cost_naive;
+  printf "   hand-pushed filter    : %d tuples\n" cost_hand;
+  printf "   planner               : %d tuples  (%.1fx better than unplanned)\n" cost_planned
+    (Float.of_int cost_naive /. Float.of_int (Int.max 1 cost_planned));
+  check "all three agree on the answer"
+    (Relation.equal r0 r1 && Relation.equal r1 r2);
+  check "the planner now closes the gap it used to leave open"
+    (cost_planned <= cost_hand)
+
+(* ------------------------------------------------------------------ *)
 
 let () =
   test_laws ();
@@ -895,5 +936,6 @@ let () =
   triangle_gap ();
   test_fork_fusion_is_strict ();
   test_query_surface ();
+  test_filter_pushdown_gap ();
   printf "\n%d checks, %d failures\n" !checks !failures;
   if !failures > 0 then exit 1

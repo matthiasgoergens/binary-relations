@@ -643,6 +643,28 @@ downstream moved.
 - **`let*` or comprehensions for the surface** — not attempted. The library
   surface is still the raw combinators.
 
+## Filter pushdown, measured before it was written
+
+A coreflexive has no cardinality, so `info_of` returns `None` and the interval
+DP treated it as a barrier: `a >> b >> where p` was planned exactly as written,
+materialising all of `a >> b` and discarding most of it. The gap was measured
+first, on a 400 × 800 chain with a filter keeping about 20 of 800 values:
+
+| | tuples touched |
+|---|---|
+| as written, unplanned | 6 800 |
+| filter bound to its neighbour by hand | 171 |
+| **planner, after the change** | **171** — 39.8× |
+
+The rewrite binds a coreflexive to whatever precedes it before the DP runs.
+What makes it safe is that it needs *no estimate*: a filter only ever shrinks
+what it is composed with, so meeting its neighbour first is essentially always
+at least as good. Given how badly the estimates behave under skew, a rewrite
+justified without them is worth more than one that needs them.
+
+Still not done: pushing filters through `meet` and `fork`, which is a
+different problem and unmeasured.
+
 ## The surface, and the fragment it covers
 
 `Query` is the answer to the brief's open question, and it comes out on the
@@ -713,8 +735,9 @@ framing exists to avoid.
 - The surface covers paths plus cycle-closing atoms; general conjunctive
   queries raise `Unsupported`.
 - No worst-case-optimal joins; the planner does binary joins only.
-- Filter pushdown is not implemented — `where_` re-associates within a chain
-  but is not pushed through `meet` or `fork`.
+- Filter pushdown through `meet`/`fork` is not implemented. Pushing a
+  coreflexive inward through a composition chain **is**, and was worth 39.8×
+  on the measured case — see below.
 - **Transients: measured, and not worth building.** The brief budgets for an
   O(1)-in/out mutable builder behind an immutable interface. On 50 000 pairs
   (`bench/build.ml`): `of_list` 13.0 ms, and building the same relation by
