@@ -1107,6 +1107,112 @@ let test_projection_compose () =
   check "and gives the join" (!failures = 0)
 
 (* ------------------------------------------------------------------ *)
+(* Regression checks extracted from defects found by OUTSIDE use       *)
+(* ------------------------------------------------------------------ *)
+
+(* Three defects this library shipped were found by pointing it at other
+   people's code, never by its own suite. That is not luck: the suite's random
+   terms were built from a hand-picked subset of constructors chosen -- by me,
+   who wrote the evaluator -- to keep results finite, so the generator was
+   shaped around the implementation's comfort zone. These checks are the
+   systematic version: walk the representation matrix instead of picking
+   cases. *)
+
+(* Defect 1: [fst_ >> finite] raised Unbounded although the value is decidable
+   pointwise and the enclosing combinator supplies a carrier. The general
+   property is "never refuse a query whose answer is finite". Rather than
+   trust a list of shapes I thought of, enumerate every pairing of Eval's
+   representation kinds under composition, and require that anything a finite
+   relation can absorb is absorbed. *)
+let test_no_gratuitous_refusal () =
+  section "Extracted: never refuse a query whose answer is finite";
+  let fin = Eval.of_list [ (1, 10); (2, 20); (3, 30) ] in
+  let fin_pairs = Eval.of_list [ ((1, 'a'), 100); ((2, 'b'), 200) ] in
+  let corefl = Eval.where_ (fun x -> x > 0) in
+  let pfun = Eval.fn (fun x -> x * 2) in
+  let pset = Eval.( >> ) Eval.fst_ fin in
+  (* Each entry: a description, and a term whose answer is finite. Every one
+     must evaluate; a raise is the defect. *)
+  let cases : (string * (unit -> (int * char, int) Eval.t)) list =
+    [ ("fst_ >> finite, forked with finite",
+       fun () -> Eval.fork (Eval.( >> ) Eval.fst_ fin) fin_pairs |> fun t ->
+                 Eval.( >> ) t (Eval.fn snd));
+      ("snd_ >> function, forked with finite",
+       fun () -> Eval.fork (Eval.( >> ) Eval.snd_ (Eval.fn Char.to_int)) fin_pairs
+                 |> fun t -> Eval.( >> ) t (Eval.fn snd));
+      ("pset meet finite",
+       fun () -> Eval.meet (Eval.( >> ) Eval.fst_ fin) (Eval.( >> ) Eval.fst_ fin)
+                 |> fun t -> Eval.meet t fin_pairs);
+      ("pset >> coreflexive, then forked",
+       fun () -> Eval.fork (Eval.( >> ) pset corefl) fin_pairs |> fun t ->
+                 Eval.( >> ) t (Eval.fn snd))
+    ]
+  in
+  let refused = ref 0 in
+  List.iter cases ~f:(fun (name, mk) ->
+    match Eval.to_list (mk ()) with
+    | _ -> ()
+    | exception Eval.Unbounded msg ->
+      Int.incr refused;
+      printf "   REFUSED %s: %s\n" name msg);
+  check_eq_int "no finite-answer query is refused" ~expect:0 !refused;
+
+  (* And the matrix itself: composing any pointwise kind with a finite
+     relation on the right must yield something a carrier can materialise.
+     Written out one kind at a time -- the kinds have different types, and the
+     first draft of this used [Obj.magic] to force them into one list, which
+     segfaulted. A test that needs [Obj.magic] is testing the wrong thing. *)
+  let matrix_refusals = ref 0 in
+  let try_pointwise name (t : (int, int) Eval.t) =
+    match Eval.to_list (Eval.materialise ~dom:[ 1; 2; 3 ] t) with
+    | _ -> ()
+    | exception Eval.Unbounded m ->
+      Int.incr matrix_refusals;
+      printf "   REFUSED %s >> finite: %s\n" name m
+  in
+  try_pointwise "coreflexive" (Eval.( >> ) corefl fin);
+  try_pointwise "function graph" (Eval.( >> ) pfun fin);
+  try_pointwise "pointwise set" (Eval.( >> ) (Eval.( >> ) pfun fin) (Eval.fn Fn.id));
+  check_eq_int "every pointwise kind composes with a finite relation"
+    ~expect:0 !matrix_refusals
+
+(* Defect 2: structural comparison is unusable on elements whose
+   representation is large or shared -- merlin's Lid.t reaches ~10 900 words
+   and building an index over 200 000 of them exhausts memory.
+
+   Pinned rather than fixed. The check builds a relation over elements that
+   share a large prefix, so every comparison walks it, and records the cost
+   against the same shape with a cheap key. When comparators land, this ratio
+   should collapse and the assertion below will fail, which is the reminder to
+   update it. *)
+let test_structural_comparison_cost () =
+  section "Extracted: what structural comparison costs on shared-heavy values";
+  let n = 3000 in
+  (* The prefix must be equal but NOT physically shared. OCaml's compare
+     short-circuits on physical equality, so a shared prefix is free -- the
+     first version of this test used one and measured 1.1x, i.e. nothing.
+     merlin's values are lazily unmarshalled into distinct structures, which
+     is exactly what defeats that short-circuit and what made the real index
+     exhaust memory. *)
+  let heavy = List.init n ~f:(fun i -> ((Array.init 400 ~f:Fn.id, i), i)) in
+  let light = List.init n ~f:(fun i -> (i, i)) in
+  let ms f =
+    let t0 = Stdlib.Sys.time () in
+    ignore (f () : unit);
+    (Stdlib.Sys.time () -. t0) *. 1000.
+  in
+  let t_heavy = ms (fun () -> ignore (Relation.of_list heavy : _ Relation.t)) in
+  let t_light = ms (fun () -> ignore (Relation.of_list light : _ Relation.t)) in
+  printf "   %d pairs, key with equal-but-unshared 400-word prefix : %6.1f ms\n" n t_heavy;
+  printf "   %d pairs, plain int key                              : %6.1f ms\n" n t_light;
+  printf "   ratio                                                 %6.1fx\n"
+    (t_heavy /. Float.max 0.001 t_light);
+  check "structural comparison is still the known bottleneck on shared keys"
+    (Float.( > ) (t_heavy /. Float.max 0.001 t_light) 3.0);
+  printf "   => pinned. When comparators land this ratio collapses and this\n";
+  printf "      assertion fails, which is the reminder to retire it.\n"
+
+(* ------------------------------------------------------------------ *)
 
 let () =
   test_laws ();
@@ -1124,6 +1230,8 @@ let () =
   test_fork_fusion_is_strict ();
   test_query_surface ();
   test_projection_compose ();
+  test_no_gratuitous_refusal ();
+  test_structural_comparison_cost ();
   test_filter_pushdown_gap ();
   test_long_cycle_gap ();
   printf "\n%d checks, %d failures\n" !checks !failures;

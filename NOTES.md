@@ -630,6 +630,52 @@ what makes indexes pay, and immutability is what makes caching them safe
 without any coherence machinery". Two separate things, and only the second is
 about immutability.
 
+## Turning outside findings into inside checks
+
+Three defects reached users of this library before its own suite saw them, all
+found by pointing it at foreign code. The interesting question is not what the
+bugs were but **why 139 checks could not see them**, and what changes so that
+next time the suite fails first.
+
+**The generator was shaped around the implementation.** The 400-random-tree
+property test built terms from a hand-picked subset of constructors — `Comp`,
+`Meet`, `Join`, `Conv`, `Plus`, `Star`, `Leaf` — chosen so that every result
+would be finite. `fst_`, `snd_`, `fork` and `id` were left out *precisely
+because* they are the non-finite ones. I wrote a generator that avoided the
+evaluator's edges, and then took its silence as evidence. A generator written
+from the signature rather than from the implementation's comfort zone would
+have hit `fst_ >> finite` in minutes.
+
+The extracted check is therefore not a list of shapes I now know about; it
+walks the **representation matrix** — every pointwise kind (`Corefl`, `Pfun`,
+`Pset`) composed with a finite relation — and asserts the general property:
+*never refuse a query whose answer is finite*. A new representation kind added
+later has to be added to that matrix, which is a much smaller thing to
+remember than a class of bug.
+
+**The comparison limit is pinned, not fixed.** A characterisation test builds a
+relation over keys with a large prefix and records the cost against plain
+integer keys. It currently asserts the ratio is *large* (**51.4×** on 3 000
+pairs with a 400-word prefix), because that is the known state; when
+comparators land, the ratio collapses and the assertion fails, which is the
+reminder to retire it.
+
+Writing those two tests produced two more lessons of the same family, both
+self-inflicted:
+
+- The first version of the matrix test used `Obj.magic` to force
+  differently-typed representation kinds into one list, and **segfaulted**. A
+  test that needs `Obj.magic` is not testing what it claims to.
+- The first version of the comparison test shared one large prefix between all
+  keys and measured **1.1×** — nothing. OCaml's `compare` short-circuits on
+  physical equality, so a shared prefix is free. It is the *equal but
+  unshared* case that is expensive, which is exactly what merlin's lazy
+  unmarshalling produces, and exactly why the real index exhausted memory. The
+  test only became a test once the prefix was built fresh per key.
+
+That second one is the session's recurring shape in miniature: a green
+measurement that was green because it was measuring nothing.
+
 ## An audit refuted the published numbers
 
 Every ratio in this repo was stated in `Relation.tuples_touched`. That counter
