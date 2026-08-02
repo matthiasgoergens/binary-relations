@@ -667,10 +667,28 @@ answer variables, which is a far wider fragment than the path-walking first
 draft — a branching query now compiles to
 `(manages >> (dom_(manages) >> dept))` instead of raising.
 
-What is left over is a core where every non-answer variable has degree three
-or more. That needs tabulation and still raises `Unsupported`, as does a
-disconnected query, since a cross product is not representable without a
-universal relation.
+**The irreducible core is handled too, by branching rather than tabulation.**
+A core where every non-answer variable has degree three or more cannot be
+contracted. The textbook remedy is tabulation, which needs pair-typed
+relations and hence variables carrying their own types — exactly the
+type-level machinery the binary framing exists to avoid. The alternative keeps
+everything monomorphic: pick such a variable, compute the finite set of values
+it can take, solve once per value and join. Substituting a value turns each of
+its atoms into a coreflexive on a neighbour, so the variable vanishes and
+elimination resumes. That is variable-at-a-time evaluation — what a generic
+join does.
+
+It is guarded by `?max_candidates`, because the compiled term grows with the
+candidate set, and computing candidates means *evaluating* the atoms at that
+variable, which is why it is a last resort. Verified against brute-force
+enumeration rather than against my own arithmetic, and the test asserts the
+comparison is not vacuous — the first version of it compared two empty
+relations, because the sample data was a tree and the query needed chords.
+
+What is still refused: an answer variable that is both disconnected and
+unconstrained, which would need a universal relation. If both answer variables
+carry constraints the answer is the cross product of two finite sets, which is
+an ordinary relation, so that case now works.
 
 **Two of the three rules shipped broken in the first draft and the failure was
 silent.** Each oriented its edges by `flip`, which allocates, and then filtered

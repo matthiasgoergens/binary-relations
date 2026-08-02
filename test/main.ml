@@ -822,23 +822,61 @@ let test_query_surface () =
     (Poly.equal [ ("alice", "eng"); ("alice", "sales") ]
        (Relation.to_list (Symbolic.run branching)));
 
-  (* The boundary is still real, just further out: a core where every non-answer
-     variable has degree three or more needs tabulation. *)
+  (* An irreducible core: variables 1 and 2 both have degree three, so no
+     elimination rule applies. Branching on a variable's value handles it.
+     Checked against brute force rather than against my own arithmetic, which
+     has been wrong more than once in this suite. *)
+  (* [manages] is a tree, so this query would have no answers there and the
+     comparison below would hold vacuously. Use a graph with the chords the
+     query asks for. *)
+  let g = Relation.of_list [ (0, 1); (1, 2); (2, 3); (0, 2); (1, 3); (2, 4); (3, 4) ] in
+  let core =
+    Query.compile (fun x ->
+      let open Query in
+      let* y = step g x in
+      let* z = step g y in
+      let* w = step g z in
+      let* () = constrain g y w in
+      let* () = constrain g x z in
+      ret w)
+  in
+  let people = Set.to_list (Set.union (Relation.dom g) (Relation.rng g)) in
+  let brute =
+    List.concat_map people ~f:(fun x ->
+      List.concat_map people ~f:(fun y ->
+        List.concat_map people ~f:(fun z ->
+          List.filter_map people ~f:(fun w ->
+            if
+              Relation.mem g x y && Relation.mem g y z && Relation.mem g z w
+              && Relation.mem g y w && Relation.mem g x z
+            then Some (x, w)
+            else None))))
+    |> Relation.of_list
+  in
+  printf "   irreducible core   : %d answers, brute force %d\n"
+    (Relation.card (Symbolic.run core)) (Relation.card brute);
+  check "branching solves a core the elimination rules cannot reduce"
+    (Relation.equal (Symbolic.run core) brute);
+  (* Without this the comparison above passes on two empty relations. *)
+  check "and the core test is not vacuous: there are answers to get right"
+    (Relation.card brute > 0);
+
+  (* The guard is real: past the candidate limit it still refuses. *)
   let unsupported =
     match
-      Query.compile (fun x ->
+      Query.compile ~max_candidates:0 (fun x ->
         let open Query in
-        let* y = step manages x in
-        let* z = step manages y in
-        let* w = step manages z in
-        let* () = constrain manages y w in
-        let* () = constrain manages x z in
+        let* y = step g x in
+        let* z = step g y in
+        let* w = step g z in
+        let* () = constrain g y w in
+        let* () = constrain g x z in
         ret w)
     with
     | _ -> false
     | exception Query.Unsupported _ -> true
   in
-  check "an irreducible core still raises rather than guessing" unsupported
+  check "and past the candidate limit it refuses rather than exploding" unsupported
 
 (* ------------------------------------------------------------------ *)
 
