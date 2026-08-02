@@ -1,5 +1,5 @@
 (executables
- (names build verify_counter headline)
+ (names build verify_counter headline fork_cost)
  (libraries rel base stdio unix)
  (flags
   (:standard -warn-error -a)))

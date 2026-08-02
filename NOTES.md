@@ -144,28 +144,50 @@ element types would not unify. The two index maps carry the same information
 and each needs only one element comparator, so the representation becomes
 fwd-plus-lazy-bwd. That is a consequence of following Core, not a workaround.
 
-**Products are the real blocker.** `fork : ('a,'b) t -> ('a,'c) t -> ('a,'b*'c) t`
-produces a relation whose range *is* pairs, so a finite result needs exactly
-the product comparator that cannot be derived. `fst_` and `snd_` escape only
-because they are function graphs that store no comparator and can stay
-polymorphic in the phantom. Three ways out:
+**~~Products are the real blocker.~~ There is no products blocker. This was
+wrong, and an audit refuted it.** `fork : ('a,'b) t -> ('a,'c) t -> ('a,'b*'c) t`
+produces a relation whose range *is* pairs, and the claim above was that the
+required product comparator cannot be derived because `Comparator.make` mints a
+fresh generative witness per call.
 
-1. `fork` takes a comparator argument — changes the algebra's signature, and
-   the algebra is the part the brief is proudest of.
-2. Define our own comparator type rather than Base's. The witness is purely
-   phantom and a non-private record *can* be built at a derived witness type,
-   so `('wa, 'wb) prod` becomes expressible. The cost is that
-   `Set.Using_comparator` and `Map.Using_comparator` no longer apply, which
-   means a purpose-built layer 0 — the very thing measured away at the top of
-   this file.
-3. Keep `Poly` for the product case only, so `fork` results are ordered
-   structurally while everything else can be given a real comparator. Sound,
-   inconsistent, and probably the pragmatic answer.
+That is true of `make` and irrelevant, because Base ships the thing this needed:
 
-Worth noticing where that lands: option 2 says the two decisions this file
-recorded as independent — "layer 0 was not needed" and "structural comparison
-is an acceptable cost" — were the same decision seen twice. Dropping `Poly`
-brings layer 0 back.
+```
+module type Derived2 = sig
+  type ('a, 'b) t
+  type (!'cmp_a, !'cmp_b) comparator_witness
+  val comparator
+    :  ('a, 'cmp_a) comparator
+    -> ('b, 'cmp_b) comparator
+    -> (('a, 'b) t, ('cmp_a, 'cmp_b) comparator_witness) comparator
+end
+```
+
+The witness is *a function of the two element witnesses* — exactly what was
+recorded as inexpressible. Applying the functor once to the pair type gives a
+stable witness constructor, so two derived pair comparators over the same
+element types do unify. Verified in
+`~/prog/binary-relations-notes/product-witness-spike/`: a `Set` of 2 000
+product-keyed elements, built with a comparator that never walks the payload.
+
+So `fork` computes its result witness from its inputs rather than taking one:
+the algebra grows a type parameter but **no argument**, and its shape survives.
+
+Two consequences, both corrections to what this file said:
+
+- **The three "ways out" were workarounds for a constraint that does not
+  exist.** Route 3 in particular — keep `Poly` for products only — was also
+  independently unsafe, which `bench/fork_cost.exe` now measures: `fork`'s cost
+  is set by its components, **76.9×** between a cheap and an expensive range at
+  identical output cardinality. It would have re-exposed precisely the type the
+  change exists to protect, in the one place the types claimed was covered.
+- **The "layer 0 comes back" corollary falls with it.** It depended entirely on
+  route 2 being necessary. "Layer 0 was not needed" and "structural comparison
+  is acceptable" really were independent decisions after all.
+
+The lesson is the one already written down: a workaround for a *structural*
+constraint is the signal to go to the library. Three routes were designed
+before anyone grepped `comparator.mli`.
 
 ### The pattern, for the third time
 
