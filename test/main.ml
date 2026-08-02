@@ -1028,6 +1028,81 @@ let test_long_cycle_gap () =
 
 
 (* ------------------------------------------------------------------ *)
+(* Composing a projection with a finite relation                       *)
+(* ------------------------------------------------------------------ *)
+
+(* Found by using the library on someone else's code: the natural way to say
+   "this position's key is its segment's key" is
+
+     fork (fst_ >> segment_key) choice_at
+
+   and [fst_ >> segment_key] raises Unbounded, because [fst_] is a function
+   graph over an unbounded domain and composing it on the left of a finite
+   relation would need a preimage.
+
+   The result really is infinite -- it relates (a, ANYTHING) to whatever
+   [segment_key] relates [a] to -- so raising is not wrong. But it is not
+   necessary either: the value is perfectly representable pointwise, and the
+   [fork] that consumes it supplies a finite carrier one line later. Refusing
+   at the inner step throws away information the outer step has. *)
+module Projection_join (R : Algebra.RELATIONS) = struct
+  open R
+
+  let q ~segment_key ~choice_at =
+    fork (fst_ >> of_relation segment_key) (of_relation choice_at)
+end
+
+let test_projection_compose () =
+  section "Composing a projection with a finite relation";
+  let module Q = Projection_join (Eval) in
+  let elem = Base_quickcheck.Generator.int_inclusive 0 3 in
+  let gen =
+    let open Base_quickcheck.Generator.Let_syntax in
+    let%bind n = Base_quickcheck.Generator.int_inclusive 0 6 in
+    let%bind keys =
+      Base_quickcheck.Generator.list_with_length ~length:n
+        (Base_quickcheck.Generator.both elem elem)
+    in
+    let%bind m = Base_quickcheck.Generator.int_inclusive 0 6 in
+    let%map cells =
+      Base_quickcheck.Generator.list_with_length ~length:m
+        (Base_quickcheck.Generator.both (Base_quickcheck.Generator.both elem elem) elem)
+    in
+    (keys, cells)
+  in
+  let module Sample = struct
+    type t = (int * int) list * ((int * int) * int) list [@@deriving sexp_of]
+
+    let quickcheck_generator = gen
+    let quickcheck_shrinker = Base_quickcheck.Shrinker.atomic
+  end in
+  let failures = ref 0 in
+  let raised = ref 0 in
+  (try
+     Base_quickcheck.Test.run_exn
+       ~config:{ Base_quickcheck.Test.default_config with test_count = 200 }
+       (module Sample)
+       ~f:(fun (keys, cells) ->
+         let segment_key = Relation.of_list keys in
+         let choice_at = Relation.of_list cells in
+         (* The join, computed directly, as the oracle. *)
+         let expected =
+           Relation.of_list
+             (List.concat_map (Relation.to_list choice_at) ~f:(fun ((s, i), c) ->
+                List.map (Set.to_list (Relation.image segment_key s)) ~f:(fun k ->
+                  ((s, i), (k, c)))))
+         in
+         match Eval.to_relation (Q.q ~segment_key ~choice_at) with
+         | got -> if not (Relation.equal got expected) then Int.incr failures
+         | exception Eval.Unbounded _ -> Int.incr raised)
+   with
+  | _ -> ());
+  printf "   200 cases: %d wrong answers, %d raised Unbounded\n" !failures !raised;
+  check "fst_ composed with a finite relation, then forked, does not raise"
+    (!raised = 0);
+  check "and gives the join" (!failures = 0)
+
+(* ------------------------------------------------------------------ *)
 
 let () =
   test_laws ();
@@ -1044,6 +1119,7 @@ let () =
   triangle_gap ();
   test_fork_fusion_is_strict ();
   test_query_surface ();
+  test_projection_compose ();
   test_filter_pushdown_gap ();
   test_long_cycle_gap ();
   printf "\n%d checks, %d failures\n" !checks !failures;

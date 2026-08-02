@@ -426,6 +426,41 @@ had been fixed for set operations one commit earlier. An instrument has to be
 extended every time work moves to a new code path, and the natural failure is
 silence, which reads as a win.
 
+## `Eval` gained a fourth constructor, found by using the library elsewhere
+
+Using `rel` on tapecheck's code turned up a real defect within minutes. The
+natural way to say "this position's key is its segment's key" is
+
+```ocaml
+fork (fst_ >> segment_key) choice_at
+```
+
+and `fst_ >> segment_key` raised `Unbounded`. The reasoning was that `fst_` is
+a function graph over an unbounded domain, so composing it on the left of a
+finite relation needs a preimage — and the *result* really is infinite, since it
+relates `(a, anything)` to whatever `segment_key` relates `a` to. Raising was
+not wrong.
+
+It was, however, unnecessary. The value is perfectly **decidable at a point**,
+and the `fork` one line later supplies a finite carrier. Refusing at the inner
+step threw away information the outer step already had.
+
+So `Eval` now has a fourth case, `Pset : ('a -> 'b Set.Poly.t)`, for relations
+that are neither finite nor single-valued but are pointwise decidable.
+`Pfun f >> Fin b` returns one instead of raising, `fork` consumes it against
+whichever branch is finite, and everything that genuinely needs enumeration —
+`converse`, `to_list`, `plus`, `group` — still refuses. The three-constructor
+design was right about the shape of the domain and wrong about one case.
+
+Property-tested, and the test was **red first**: 163 of 200 generated cases
+raised `Unbounded` and none gave a wrong answer, which is exactly the signature
+of an over-strict refusal rather than a computation error. Now 0 and 0.
+
+The general point is worth more than the fix. This library had 130 passing
+checks and a law suite, and none of them found this, because they were all
+written by the person who chose the design. **The first hour of using it on
+someone else's code found it.**
+
 ## What immutability actually buys, and what it does not
 
 The brief's premises include "all relations immutable", and several arguments

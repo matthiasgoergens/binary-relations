@@ -37,6 +37,12 @@ module Impl = struct
         (** materialised; the only case that can be enumerated *)
     | Corefl : ('a -> bool) -> ('a, 'a) t  (** sub-identity; self-converse *)
     | Pfun : ('a -> 'b option) -> ('a, 'b) t  (** graph of a partial function *)
+    | Pset : ('a -> 'b Set.Poly.t) -> ('a, 'b) t
+        (** pointwise set-valued: [fst_ >> finite] is not a function graph and
+            not finite, but it {e is} decidable at each point, and that is
+            enough for anything that later supplies a carrier. Without this
+            case such a composition had to raise, which threw away information
+            the very next combinator would have used. *)
 
   module V = struct
     (* For the evaluator the scalar language is the host: a term [ 'a v ] is
@@ -78,7 +84,7 @@ module Impl = struct
 
   let is_bot : type a b. (a, b) t -> bool = function
     | Fin r -> Relation.is_empty r
-    | Corefl _ | Pfun _ -> false
+    | Corefl _ | Pfun _ | Pset _ -> false
 
   (* Give an unbounded value a finite carrier. This is how "run the function
      backwards" is actually done: materialise on the inputs you care about,
@@ -90,20 +96,29 @@ module Impl = struct
     | Corefl p -> Fin (Relation.of_list (List.filter_map dom ~f:(fun x -> if p x then Some (x, x) else None)))
     | Pfun f ->
       Fin (Relation.of_list (List.filter_map dom ~f:(fun x -> Option.map (f x) ~f:(fun y -> (x, y)))))
+    | Pset g ->
+      Fin
+        (Relation.of_list
+           (List.concat_map dom ~f:(fun x -> List.map (Set.to_list (g x)) ~f:(fun y -> (x, y)))))
 
   let to_relation : type a b. (a, b) t -> (a, b) Relation.t = function
     | Fin r -> r
     | Corefl _ -> unbounded "to_relation: coreflexive over an unbounded domain (use materialise)"
     | Pfun _ -> unbounded "to_relation: function graph over an unbounded domain (use materialise)"
+    | Pset _ ->
+      unbounded "to_relation: pointwise relation over an unbounded domain (use materialise)"
 
   let to_list t = Relation.to_list (to_relation t)
 
   (* Coreflexives and partial functions share a shape: both are decided
      pointwise on the left element. Several operations only care about that. *)
-  let pointwise : type a b. (a, b) t -> (a -> b option) option = function
+  (* Everything except [Fin] is decidable at a point, which is what the
+     combinators that supply a carrier need. *)
+  let setwise : type a b. (a, b) t -> (a -> b Set.Poly.t) option = function
     | Fin _ -> None
-    | Corefl p -> Some (fun x -> if p x then Some x else None)
-    | Pfun f -> Some f
+    | Corefl p -> Some (fun x -> if p x then Set.Poly.singleton x else Set.Poly.empty)
+    | Pfun f -> Some (fun x -> match f x with Some y -> Set.Poly.singleton y | None -> Set.Poly.empty)
+    | Pset g -> Some g
 
   let ( >> ) : type a b c. (a, b) t -> (b, c) t -> (a, c) t =
    fun x y ->
@@ -120,18 +135,40 @@ module Impl = struct
     | Corefl p, Pfun f -> Pfun (fun v -> if p v then f v else None)
     | Pfun f, Corefl q -> Pfun (fun v -> match f v with Some w when q w -> Some w | _ -> None)
     | Pfun f, Pfun g -> Pfun (fun v -> Option.bind (f v) ~f:g)
-    | Pfun _, Fin b ->
-      if Relation.is_empty b then bot
-      else
-        unbounded
-          ">>: a function graph on the left needs a preimage over an unbounded domain (materialise \
-           the left operand first)"
+    (* Was: raise. The result is not finite, but it is decidable at a point,
+       and whatever consumes it usually supplies a carrier. *)
+    | Pfun f, Fin b ->
+      Pset (fun v -> match f v with Some w -> Relation.image b w | None -> Set.Poly.empty)
+    | Pset g, Fin b ->
+      Pset
+        (fun v ->
+          Set.fold (g v) ~init:Set.Poly.empty ~f:(fun acc w ->
+            Set.union acc (Relation.image b w)))
+    | Fin a, Pset g ->
+      Fin
+        (Relation.of_list
+           (List.concat_map (Relation.to_list a) ~f:(fun (u, v) ->
+              List.map (Set.to_list (g v)) ~f:(fun w -> (u, w)))))
+    | Corefl p, Pset g -> Pset (fun v -> if p v then g v else Set.Poly.empty)
+    | Pset g, Corefl q -> Pset (fun v -> Set.filter (g v) ~f:q)
+    | Pfun f, Pset g -> Pset (fun v -> match f v with Some w -> g w | None -> Set.Poly.empty)
+    | Pset g, Pfun f ->
+      Pset
+        (fun v ->
+          Set.fold (g v) ~init:Set.Poly.empty ~f:(fun acc w ->
+            match f w with Some z -> Set.add acc z | None -> acc))
+    | Pset g, Pset h ->
+      Pset
+        (fun v ->
+          Set.fold (g v) ~init:Set.Poly.empty ~f:(fun acc w -> Set.union acc (h w)))
 
   let converse : type a b. (a, b) t -> (b, a) t = function
     | Fin r -> Fin (Relation.converse r)
     | Corefl p -> Corefl p
     | Pfun _ ->
       unbounded "converse: of a function graph over an unbounded domain (use materialise first)"
+    | Pset _ ->
+      unbounded "converse: of a pointwise relation over an unbounded domain (use materialise first)"
 
   let meet : type a b. (a, b) t -> (a, b) t -> (a, b) t =
    fun x y ->
@@ -154,6 +191,15 @@ module Impl = struct
           match (f v, g v) with
           | Some u, Some w when Poly.equal u w -> Some u
           | _ -> None)
+    | Fin a, Pset g -> Fin (Relation.filter a ~f:(fun u v -> Set.mem (g u) v))
+    | Pset g, Fin b -> Fin (Relation.filter b ~f:(fun u v -> Set.mem (g u) v))
+    | Corefl p, Pset g -> Corefl (fun v -> p v && Set.mem (g v) v)
+    | Pset g, Corefl q -> Corefl (fun v -> q v && Set.mem (g v) v)
+    | Pfun f, Pset g ->
+      Pfun (fun v -> match f v with Some w when Set.mem (g v) w -> Some w | _ -> None)
+    | Pset g, Pfun f ->
+      Pfun (fun v -> match f v with Some w when Set.mem (g v) w -> Some w | _ -> None)
+    | Pset g, Pset h -> Pset (fun v -> Set.inter (g v) (h v))
 
   let join : type a b. (a, b) t -> (a, b) t -> (a, b) t =
    fun x y ->
@@ -171,6 +217,7 @@ module Impl = struct
     | Fin r -> Fin (Relation.plus r)
     | Corefl p -> Corefl p (* already transitive *)
     | Pfun _ -> unbounded "plus: of a function graph over an unbounded domain (materialise first)"
+    | Pset _ -> unbounded "plus: of a pointwise relation over an unbounded domain (materialise first)"
 
   (* [star] on a finite relation is reflexive only on the elements that occur
      in it. Full reflexivity would be [id], which is not a finite value; the
@@ -181,34 +228,35 @@ module Impl = struct
     | Fin r -> Fin (Relation.star_on_carrier r)
     | Corefl _ -> id
     | Pfun _ -> unbounded "star: of a function graph over an unbounded domain (materialise first)"
+    | Pset _ -> unbounded "star: of a pointwise relation over an unbounded domain (materialise first)"
 
   let fork : type a b c. (a, b) t -> (a, c) t -> (a, b * c) t =
    fun x y ->
     match (x, y) with
     | Fin a, Fin b -> Fin (Relation.fork a b)
+    (* A finite branch supplies the carrier the other branch needs. *)
     | Fin a, _ ->
-      let g = Option.value_exn (pointwise y) in
+      let g = Option.value_exn (setwise y) in
       Fin
         (Relation.of_list
-           (List.filter_map (Relation.to_list a) ~f:(fun (u, v) ->
-              Option.map (g u) ~f:(fun w -> (u, (v, w))))))
+           (List.concat_map (Relation.to_list a) ~f:(fun (u, v) ->
+              List.map (Set.to_list (g u)) ~f:(fun w -> (u, (v, w))))))
     | _, Fin b ->
-      let f = Option.value_exn (pointwise x) in
+      let f = Option.value_exn (setwise x) in
       Fin
         (Relation.of_list
-           (List.filter_map (Relation.to_list b) ~f:(fun (u, w) ->
-              Option.map (f u) ~f:(fun v -> (u, (v, w))))))
+           (List.concat_map (Relation.to_list b) ~f:(fun (u, w) ->
+              List.map (Set.to_list (f u)) ~f:(fun v -> (u, (v, w))))))
     | _, _ ->
-      let f = Option.value_exn (pointwise x) and g = Option.value_exn (pointwise y) in
-      Pfun
+      let f = Option.value_exn (setwise x) and g = Option.value_exn (setwise y) in
+      Pset
         (fun u ->
-          match (f u, g u) with
-          | Some v, Some w -> Some (v, w)
-          | _ -> None)
+          Set.fold (f u) ~init:Set.Poly.empty ~f:(fun acc v ->
+            Set.fold (g u) ~init:acc ~f:(fun acc w -> Set.add acc (v, w))))
 
   let group : type a b. (a, b) t -> (a, b list) t = function
     | Fin r -> Fin (Relation.group r)
-    | Corefl _ | Pfun _ ->
+    | Corefl _ | Pfun _ | Pset _ ->
       unbounded "group: needs a finite relation to transpose (materialise first)"
 
   let rdiv : type a b c. (a, c) t -> (b, c) t -> (a, b) t =
