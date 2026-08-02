@@ -185,7 +185,8 @@ Two consequences, both corrections to what this file said:
 - **The three "ways out" were workarounds for a constraint that does not
   exist.** Route 3 in particular — keep `Poly` for products only — was also
   independently unsafe, which `bench/fork_cost.exe` now measures: `fork`'s cost
-  is set by its components, **76.9×** between a cheap and an expensive range at
+  is set by its components, **71.9×** (120.973 ± 0.333 ms against 1.682 ± 0.349,
+  mean ± sd over 10 runs) between a cheap and an expensive range at
   identical output cardinality. It would have re-exposed precisely the type the
   change exists to protect, in the one place the types claimed was covered.
 - **The "layer 0 comes back" corollary falls with it.** It depended entirely on

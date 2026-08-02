@@ -29,6 +29,20 @@ let time_ms f =
   let r = f () in
   ((Stdlib.Sys.time () -. t0) *. 1000., r)
 
+(* Mean and sd over repeats, discarding the first run. This repo's standard is
+   mean +- sd over 10 runs (bench/headline.ml); the first version of this file
+   reported a single run, and that single number then reached NOTES.md and a
+   commit message before anyone checked it against the house standard. *)
+let stats xs =
+  let n = Float.of_int (List.length xs) in
+  let mean = List.sum (module Float) xs ~f:Fn.id /. n in
+  let var = List.sum (module Float) xs ~f:(fun x -> (x -. mean) **. 2.) /. n in
+  (mean, Float.sqrt var)
+
+let measure ?(reps = 11) f =
+  let xs = List.init reps ~f:(fun _ -> fst (time_ms f)) in
+  stats (List.tl_exn xs)
+
 (* Two things have to be true for this probe to measure anything, and the
    first version of it got both wrong -- which showed up as the expensive case
    timing *faster* than the control.
@@ -58,12 +72,11 @@ let () =
            List.init per_dom ~f:(fun j -> (d, mk (off + (d * per_dom) + j)))))
     in
     let a = mkrel 0 and b = mkrel 10_000 in
-    (* Discard a warmup run: the first pays lazy index construction. *)
-    ignore (Rel.Relation.fork a b : _ Rel.Relation.t);
-    let ms, out = time_ms (fun () -> Rel.Relation.fork a b) in
-    Stdio.printf "   %-34s %9.3f ms   (%d pairs out)\n" name ms
+    let _, out = time_ms (fun () -> Rel.Relation.fork a b) in
+    let mean, sd = measure (fun () -> ignore (Rel.Relation.fork a b : _ Rel.Relation.t)) in
+    Stdio.printf "   %-34s %9.3f ms  ± %.3f  (%d pairs out)\n" name mean sd
       (Rel.Relation.card out);
-    ms
+    mean
   in
   let cheap = run "range = short list (control)" small in
   let dear = run "range = 400-word shared prefix" big in
