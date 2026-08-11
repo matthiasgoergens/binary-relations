@@ -281,6 +281,17 @@ and worth not reinventing:
 - **Rel** (RelationalAI), SIGMOD 2025 companion / arXiv 2504.10323 — the
   opposite bet: a whole language rather than a library, explicitly to avoid the
   "query sublanguage embedded in a host language" split.
+- **Fixen** ([fixen-lang.org](https://fixen-lang.org/guides/getting-started/00-what-is-fpop/)) —
+  "fixed-point-oriented programming": named relations plus Datalog-style rules,
+  compiled to Haskell, with optimisation (processing order, indexing) as
+  directives separate from the logic. The same design cell as Datafun/Flix —
+  lattice-valued facts, monotonicity, Kleene iteration — as a code generator
+  rather than a library. Reads as supply-side (a research vehicle) rather than
+  evidence of demand. Their two-rule Dijkstra is the cleanest illustration yet
+  of why lattice-valued relations are the missing capability here: shortest
+  path is `min`-aggregation under recursion, which a set-valued algebra cannot
+  express, and which is exactly the extension flagged below for "when
+  aggregation has to interact with recursion".
 - **Associative arrays / D4M** (Kepner) — every relation is a semiring-valued
   binary map; claims to unify SQL, NoSQL and NewSQL under one algebra.
   Implemented in Python, Julia and Matlab/Octave, so there is running code. A
