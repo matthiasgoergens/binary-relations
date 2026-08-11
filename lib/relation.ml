@@ -503,8 +503,49 @@ module General = struct
 
   let pair_comparator = pair_cmp
 
+  let ca r = r.ca
+  let cb r = r.cb
+
   let empty ca cb = empty_g ca cb (pair_cmp ca cb)
   let of_pairs = of_pairs_g
+
+  let of_list_with ca cb l =
+    of_pairs_g ca cb (Set.Using_comparator.of_list ~comparator:(pair_cmp ca cb) l)
+
+  (* A comparator that remembers how it was built. Projections need to take a
+     product comparator apart, and [Comparator.Derived2] has no inverse, so the
+     decomposition has to happen on this descriptor instead.
+
+     The recovery is partial by construction: nothing stops [Base c] being
+     built at a product witness type ([pair_comparator] is public, so the
+     witness offers no protection), and the type checker does not refute it.
+     Every construction site inside the library maintains "no [Base] at a
+     product witness", and the projections below ANNOUNCE the degraded state
+     rather than returning something plausible — the same rule this project
+     applies elsewhere: an invariant held by construction, not by type. *)
+  type ('a, 'w) desc =
+    | Base : ('a, 'w) Comparator.t -> ('a, 'w) desc
+    | Prod : ('a, 'wa) desc * ('b, 'wb) desc -> ('a * 'b, ('wa, 'wb) pair_witness) desc
+
+  let rec comparator_of_desc : type a w. (a, w) desc -> (a, w) Comparator.t = function
+    | Base c -> c
+    | Prod (da, db) -> pair_cmp (comparator_of_desc da) (comparator_of_desc db)
+
+  let fst_comparator : type a b ac bc. (a * b, (ac, bc) pair_witness) desc -> (a, ac) Comparator.t =
+    function
+    | Prod (da, _) -> comparator_of_desc da
+    | Base _ ->
+      invalid_arg
+        "Relation.General.fst_comparator: a bare comparator at a product witness cannot be \
+         decomposed; build the descriptor with Prod"
+
+  let snd_comparator : type a b ac bc. (a * b, (ac, bc) pair_witness) desc -> (b, bc) Comparator.t =
+    function
+    | Prod (_, db) -> comparator_of_desc db
+    | Base _ ->
+      invalid_arg
+        "Relation.General.snd_comparator: a bare comparator at a product witness cannot be \
+         decomposed; build the descriptor with Prod"
 
   let of_list (type a ac b bc)
         (module A : Comparator.S with type t = a and type comparator_witness = ac)

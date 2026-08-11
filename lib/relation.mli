@@ -257,13 +257,14 @@ val reset_counters : unit -> unit
 module General : sig
   type ('a, 'acmp, 'b, 'bcmp) t
 
-  type ('acmp, 'bcmp) pair_witness
+  type (!'acmp, !'bcmp) pair_witness
   (** The witness of a pair set over elements witnessed by ['acmp] and
       ['bcmp]. Nominal to a single library-level [Comparator.Derived2]
       application, so all pair sets over the same element comparators
-      unify. *)
+      unify. The parameters are injective, which is what lets the
+      {!desc} GADT decompose a product witness into its components. *)
 
-  type 'bcmp list_witness
+  type !'bcmp list_witness
   (** The witness of a list-typed range, from a single library-level
       [Comparator.Derived] application; {!group}'s result. *)
 
@@ -271,6 +272,31 @@ module General : sig
     ('a, 'acmp) Comparator.t ->
     ('b, 'bcmp) Comparator.t ->
     ('a * 'b, ('acmp, 'bcmp) pair_witness) Comparator.t
+
+  val ca : ('a, 'acmp, 'b, 'bcmp) t -> ('a, 'acmp) Comparator.t
+  val cb : ('a, 'acmp, 'b, 'bcmp) t -> ('b, 'bcmp) Comparator.t
+
+  (** A comparator that remembers how it was built. Projections need to take a
+      product comparator apart, and [Comparator.Derived2] has no inverse, so
+      decomposition happens on this descriptor instead.
+
+      The recovery is partial: [pair_comparator] is public, so nothing stops
+      [Base] being built at a product witness, and the type checker does not
+      refute it. The library owns every construction site and maintains "no
+      [Base] at a product witness" by construction; {!fst_comparator} and
+      {!snd_comparator} raise on the degraded state rather than returning
+      something plausible. *)
+  type ('a, 'w) desc =
+    | Base : ('a, 'w) Comparator.t -> ('a, 'w) desc
+    | Prod : ('a, 'wa) desc * ('b, 'wb) desc -> ('a * 'b, ('wa, 'wb) pair_witness) desc
+
+  val comparator_of_desc : ('a, 'w) desc -> ('a, 'w) Comparator.t
+
+  val fst_comparator : ('a * 'b, ('acmp, 'bcmp) pair_witness) desc -> ('a, 'acmp) Comparator.t
+  (** @raise Invalid_argument on [Base] at a product witness. *)
+
+  val snd_comparator : ('a * 'b, ('acmp, 'bcmp) pair_witness) desc -> ('b, 'bcmp) Comparator.t
+  (** @raise Invalid_argument on [Base] at a product witness. *)
 
   (** {3 Construction} *)
 
@@ -287,6 +313,11 @@ module General : sig
     ('b, 'bcmp) Comparator.Module.t ->
     ('a * 'b) list ->
     ('a, 'acmp, 'b, 'bcmp) t
+
+  val of_list_with :
+    ('a, 'acmp) Comparator.t -> ('b, 'bcmp) Comparator.t -> ('a * 'b) list -> ('a, 'acmp, 'b, 'bcmp) t
+  (** [of_list] with bare comparators instead of first-class modules — what an
+      interpreter wants when the comparators arrive from another relation. *)
 
   val singleton :
     ('a, 'acmp) Comparator.t -> ('b, 'bcmp) Comparator.t -> 'a -> 'b -> ('a, 'acmp, 'b, 'bcmp) t

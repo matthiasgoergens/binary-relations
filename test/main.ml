@@ -1265,6 +1265,45 @@ let test_general_comparators () =
   check_eq_int "General union with matching witnesses" ~expect:5 (G.card u)
 
 (* ------------------------------------------------------------------ *)
+(* Eval.General: the four-parameter algebra, end to end                *)
+(* ------------------------------------------------------------------ *)
+
+let test_eval_general () =
+  section "Eval.General: the four-parameter algebra end to end";
+  let module E = Eval.General in
+  let module R = Relation.General in
+  let w key = { Coarse.key; payload = [] } in
+  let card t = R.card (E.to_relation t) in
+  (* "anna" and "andy" share a coarse key, so both join to department 10. *)
+  let manages =
+    E.of_list (module Int) (module Coarse) [ (1, w "anna"); (2, w "bob"); (3, w "andy") ]
+  in
+  let dept = E.of_list (module Coarse) (module Int) [ (w "anna", 10); (w "bob", 20) ] in
+  let open E in
+  let r = manages >> dept in
+  check_eq_int "compose through a coarse middle" ~expect:3 (card r);
+  check_eq_int "converse of a composition" ~expect:3 (card (converse r));
+  let seniors = r >> where_ Int.comparator (fun d -> d >= 20) in
+  check_eq_int "where_ filters by a coreflexive" ~expect:1 (card seniors);
+  let both = fork r r >> fst_ (R.Prod (R.Base Int.comparator, R.Base Int.comparator)) in
+  check_eq_int "fork then project is the identity here" ~expect:3 (card both);
+  check_eq_int "id is a left unit" ~expect:3 (card (id Int.comparator >> r));
+  check_eq_int "bot is a join unit" ~expect:3 (card (join (bot Int.comparator Int.comparator) r));
+  let chain = of_list (module Int) (module Int) [ (1, 2); (2, 3) ] in
+  check_eq_int "plus adds the transitive pairs" ~expect:3 (card (plus chain));
+  check_eq_int "star is reflexive on the carrier only" ~expect:6 (card (star chain));
+  (* "run the function backwards": materialise on a carrier, then converse. *)
+  let succs = fn Int.comparator succ in
+  check
+    "converse of an unbounded function graph announces"
+    (try
+       ignore (converse succs);
+       false
+     with Eval.Unbounded _ -> true);
+  let back = converse (materialise ~ca:Int.comparator ~dom:[ 1; 2; 3 ] succs) in
+  check_eq_int "materialise makes converse free" ~expect:3 (card back)
+
+(* ------------------------------------------------------------------ *)
 
 let () =
   test_laws ();
@@ -1287,5 +1326,6 @@ let () =
   test_filter_pushdown_gap ();
   test_long_cycle_gap ();
   test_general_comparators ();
+  test_eval_general ();
   printf "\n%d checks, %d failures\n" !checks !failures;
   if !failures > 0 then exit 1
