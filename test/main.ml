@@ -1213,6 +1213,58 @@ let test_structural_comparison_cost () =
   printf "      assertion fails, which is the reminder to retire it.\n"
 
 (* ------------------------------------------------------------------ *)
+(* Relation.General: the four-parameter interface                      *)
+(* ------------------------------------------------------------------ *)
+
+(* The slice's discriminating case, rerun against the real library: a
+   comparator that deliberately ignores a large payload, so "apple" and
+   "avocado" are ONE key. A card of 1 is impossible under [Poly], so it
+   proves the carried comparator is genuinely in force, not merely carried. *)
+module Coarse = struct
+  module T = struct
+    type t = { key : string; payload : string list }
+
+    let compare a b = Char.compare a.key.[0] b.key.[0]
+    let sexp_of_t t = Sexp.Atom t.key
+  end
+
+  include T
+  include Comparator.Make (T)
+end
+
+let test_general_comparators () =
+  section "Relation.General: comparators are in force, not just carried";
+  let module G = Relation.General in
+  let w key = { Coarse.key; payload = List.init 8 ~f:(fun k -> sprintf "w%d" k) } in
+  let r =
+    G.of_list (module Int) (module Coarse)
+      [ (1, w "apple"); (2, w "avocado"); (3, w "beet"); (1, w "cherry") ]
+  in
+  check_eq_int "General card counts distinct keys" ~expect:4 (G.card r);
+  let collapsed = G.of_list (module Int) (module Coarse) [ (1, w "apple"); (1, w "avocado") ] in
+  check_eq_int "apple+avocado collapse to one pair (Poly would say 2)" ~expect:1 (G.card collapsed);
+  check_eq_int "General image of collapsed key" ~expect:1 (Set.length (G.image collapsed 1));
+  let back = G.of_list (module Coarse) (module Int) [ (w "apple", 10); (w "beet", 20) ] in
+  let rr = G.compose r back in
+  check_eq_int "General compose through a coarse middle" ~expect:3 (G.card rr);
+  let c = G.converse r in
+  check_eq_int "General converse preserves card" ~expect:4 (G.card c);
+  (* "avocado" and "apple" are the same coarse key, so its image under the
+     converse collects both right-hand sides. *)
+  check_eq_int "General converse preimage-as-image" ~expect:2 (Set.length (G.image c (w "avocado")));
+  let nums = G.of_list (module Int) (module Int) [ (1, 100); (1, 200); (3, 300) ] in
+  let f = G.fork nums nums in
+  check_eq_int "General fork derives its own witness" ~expect:5 (G.card f);
+  let f2 = G.fork f nums in
+  check_eq_int "General nested fork needs no new machinery" ~expect:9 (G.card f2);
+  let g = G.group r in
+  check_eq_int "General group" ~expect:3 (G.card g);
+  let e = G.empty Int.comparator Coarse.comparator in
+  check_eq_int "General empty is a function of the comparators" ~expect:0 (G.card e);
+  let u = G.union r (G.of_list (module Int) (module Coarse) [ (5, w "durian") ]) in
+  check_eq_int "General union with matching witnesses" ~expect:5 (G.card u)
+
+(* ------------------------------------------------------------------ *)
 
 let () =
   test_laws ();
@@ -1234,5 +1286,6 @@ let () =
   test_structural_comparison_cost ();
   test_filter_pushdown_gap ();
   test_long_cycle_gap ();
+  test_general_comparators ();
   printf "\n%d checks, %d failures\n" !checks !failures;
   if !failures > 0 then exit 1
