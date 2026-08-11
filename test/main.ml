@@ -61,6 +61,41 @@ module Sample = struct
   let to_sample { a; b; c } = { L.a = Eval.of_list a; b = Eval.of_list b; c = Eval.of_list c }
 end
 
+(* The same samples, interpreted at four parameters. *)
+module Sample4 = struct
+  module L = Laws.General.Make (Eval.General)
+
+  type t = {
+    a : (int * int) list;
+    b : (int * int) list;
+    c : (int * int) list;
+  }
+  [@@deriving sexp_of]
+
+  let elem = Base_quickcheck.Generator.int_inclusive 0 5
+
+  let rel =
+    let open Base_quickcheck.Generator.Let_syntax in
+    let%bind n = Base_quickcheck.Generator.int_inclusive 0 12 in
+    Base_quickcheck.Generator.list_with_length
+      ~length:n
+      (Base_quickcheck.Generator.both elem elem)
+
+  let quickcheck_generator =
+    let open Base_quickcheck.Generator.Let_syntax in
+    let%map a = rel and b = rel and c = rel in
+    { a; b; c }
+
+  let quickcheck_shrinker = Base_quickcheck.Shrinker.atomic
+
+  let to_sample { a; b; c } =
+    {
+      L.a = Eval.General.of_list (module Int) (module Int) a;
+      b = Eval.General.of_list (module Int) (module Int) b;
+      c = Eval.General.of_list (module Int) (module Int) c;
+    }
+end
+
 let qc_config = { Base_quickcheck.Test.default_config with test_count = 300 }
 
 (* ------------------------------------------------------------------ *)
@@ -1293,7 +1328,7 @@ let test_eval_general () =
   check_eq_int "plus adds the transitive pairs" ~expect:3 (card (plus chain));
   check_eq_int "star is reflexive on the carrier only" ~expect:6 (card (star chain));
   (* "run the function backwards": materialise on a carrier, then converse. *)
-  let succs = fn Int.comparator succ in
+  let succs = fn Int.comparator Int.comparator succ in
   check
     "converse of an unbounded function graph announces"
     (try
@@ -1355,6 +1390,77 @@ let test_incr_general () =
   check "the delta path was taken" (Rel_incr.delta_updates () >= 1)
 
 (* ------------------------------------------------------------------ *)
+(* Laws, planner and surface at four parameters                        *)
+(* ------------------------------------------------------------------ *)
+
+let test_laws_general () =
+  section "Laws.General: the same laws, property-checked against Eval.General";
+  let module L = Laws.General.Make (Eval.General) in
+  let by_group = Hashtbl.create (module String) in
+  List.iter L.all ~f:(fun law ->
+    let ok = ref true in
+    (try
+       Base_quickcheck.Test.run_exn
+         ~config:qc_config
+         (module Sample4)
+         ~f:(fun s -> if not (law.L.check (Sample4.to_sample s)) then failwith "law violated")
+     with
+    | e ->
+      ok := false;
+      incr failures;
+      printf "FAIL  law %s/%s\n      %s\n" law.L.group law.L.name (Exn.to_string e));
+    incr checks;
+    Hashtbl.update by_group law.L.group ~f:(function
+      | None -> (1, if !ok then 0 else 1)
+      | Some (n, f) -> (n + 1, f + if !ok then 0 else 1)));
+  Hashtbl.iteri by_group ~f:(fun ~key ~data:(n, f) ->
+    printf "   %-20s %2d laws, %d failing\n" key n f)
+
+let test_plan_general () =
+  section "Plan.General: fusion fires and the plan is sound";
+  let module S = Symbolic.General in
+  let module R = Relation.General in
+  let n = 300 in
+  (* A hub with a ring through the spokes: skewed, so the unfused triangle
+     materialises far more than the result. *)
+  let edges =
+    R.of_list (module Int) (module Int)
+      (List.concat (List.init n ~f:(fun i -> [ (0, i); (i, (i + 1) % n) ])))
+  in
+  let e = S.of_relation edges in
+  let tri = S.(meet (e >> e) e) in
+  let opt = Plan.General.optimise tri in
+  check "the meet is fused into the composition"
+    (String.is_substring (S.to_string opt) ~substring:"⋈");
+  check "the planned tree agrees with the written one" (R.equal (S.run opt) (S.run tri));
+  let chain = S.(e >> e >> e >> e) in
+  check "re-association agrees with the written chain"
+    (R.equal (S.run (Plan.General.optimise chain)) (S.run chain))
+
+let test_query_general () =
+  section "Query.General: the surface with points, at four parameters";
+  let module Q = Query.General in
+  let module R = Relation.General in
+  let edges = R.of_list (module Int) (module Int) [ (1, 2); (2, 3); (1, 3); (3, 4) ] in
+  let two_steps =
+    Q.run ~cmp:Int.comparator (fun x ->
+      let open Q in
+      let* y = step edges x in
+      let* z = step edges y in
+      ret z)
+  in
+  check_eq_int "a chain compiles and runs" ~expect:3 (R.card two_steps);
+  let triangles =
+    Q.run ~cmp:Int.comparator (fun x ->
+      let open Q in
+      let* y = step edges x in
+      let* z = step edges y in
+      let* () = constrain edges x z in
+      ret z)
+  in
+  check_eq_int "a cycle closes by meet" ~expect:1 (R.card triangles)
+
+(* ------------------------------------------------------------------ *)
 
 let () =
   test_laws ();
@@ -1380,5 +1486,8 @@ let () =
   test_eval_general ();
   test_symbolic_general ();
   test_incr_general ();
+  test_laws_general ();
+  test_plan_general ();
+  test_query_general ();
   printf "\n%d checks, %d failures\n" !checks !failures;
   if !failures > 0 then exit 1

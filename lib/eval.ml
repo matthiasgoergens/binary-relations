@@ -340,7 +340,7 @@ module General = struct
     let bot ca cb = Fin (R.empty ca cb)
     let id ca = Corefl (ca, fun _ -> true)
     let where_ ca p = Corefl (ca, p)
-    let fn cb f = Pfun (cb, fun x -> Some (f x))
+    let fn _ca cb f = Pfun (cb, fun x -> Some (f x))
     let fst_ d = Pfun (R.fst_comparator d, fun (a, _) -> Some a)
     let snd_ d = Pfun (R.snd_comparator d, fun (_, b) -> Some b)
 

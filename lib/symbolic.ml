@@ -262,7 +262,12 @@ module General = struct
           ('a, 'acmp, 'b, 'bcmp) t * ('a, 'acmp, 'c, 'ccmp) t
           -> ('a, 'acmp, 'b * 'c, ('bcmp, 'ccmp) Relation.General.pair_witness) t
       | Where : node * ('a, 'acmp) Comparator.t * ('a -> bool) -> ('a, 'acmp, 'a, 'acmp) t
-      | Fn : ('b, 'bcmp) Comparator.t * ('a -> 'b) -> ('a, 'acmp, 'b, 'bcmp) t
+      | Fn :
+          ('a, 'acmp) Comparator.t * ('b, 'bcmp) Comparator.t * ('a -> 'b)
+          -> ('a, 'acmp, 'b, 'bcmp) t
+          (** The graph of a host function. The domain comparator is stored
+              even though evaluation never needs it: it is what makes
+              {!ca_of} total, which the planner's rewrites rely on. *)
       | Group : ('a, 'acmp, 'b, 'bcmp) t -> ('a, 'acmp, 'b list, 'bcmp Relation.General.list_witness) t
       | Leaf : ('a, 'acmp, 'b, 'bcmp) Relation.General.t -> ('a, 'acmp, 'b, 'bcmp) t
       | MeetComp :
@@ -291,7 +296,7 @@ module General = struct
     let fst_ d = Fst d
     let snd_ d = Snd d
     let fork x y = Fork (x, y)
-    let fn cb f = Fn (cb, f)
+    let fn ca cb f = Fn (ca, cb, f)
     let group x = Group x
     let of_relation r = Leaf r
     let of_list ma mb l = Leaf (Relation.General.of_list ma mb l)
@@ -306,6 +311,53 @@ module General = struct
   include Impl
 
   module _ : Algebra.General.RELATIONS = Impl
+
+  (* The comparator of a tree's domain (respectively range). Total: every node
+     either stores its comparators or computes them from its children — which
+     is the reason {!Fn} stores a domain comparator it never evaluates with.
+     A planner needs these to rebuild absorbing elements ([bot] at a new
+     range type) and identities at the right witness. *)
+  let rec ca_of : type a ac b bc. (a, ac, b, bc) t -> (a, ac) Comparator.t = function
+    | Id ca -> ca
+    | Bot (ca, _) -> ca
+    | Comp (x, _) -> ca_of x
+    | Conv x -> cb_of x
+    | Meet (x, _) -> ca_of x
+    | Join (x, _) -> ca_of x
+    | Rdiv (x, _) -> ca_of x
+    | Ldiv (x, _) -> cb_of x
+    | Plus x -> ca_of x
+    | Star x -> ca_of x
+    | Fst d -> Relation.General.comparator_of_desc d
+    | Snd d -> Relation.General.comparator_of_desc d
+    | Fork (x, _) -> ca_of x
+    | Where (_, ca, _) -> ca
+    | Fn (ca, _, _) -> ca
+    | Group x -> ca_of x
+    | Leaf r -> Relation.General.ca r
+    | MeetComp (x, _, _) -> ca_of x
+    | MeetComp3 (x, _, _, _) -> ca_of x
+
+  and cb_of : type a ac b bc. (a, ac, b, bc) t -> (b, bc) Comparator.t = function
+    | Id ca -> ca
+    | Bot (_, cb) -> cb
+    | Comp (_, y) -> cb_of y
+    | Conv x -> ca_of x
+    | Meet (x, _) -> cb_of x
+    | Join (x, _) -> cb_of x
+    | Rdiv (_, y) -> ca_of y
+    | Ldiv (_, y) -> cb_of y
+    | Plus x -> cb_of x
+    | Star x -> cb_of x
+    | Fst d -> Relation.General.fst_comparator d
+    | Snd d -> Relation.General.snd_comparator d
+    | Fork (x, y) -> Relation.General.pair_comparator (cb_of x) (cb_of y)
+    | Where (_, ca, _) -> ca
+    | Fn (_, cb, _) -> cb
+    | Group x -> Relation.General.list_comparator (cb_of x)
+    | Leaf r -> Relation.General.cb r
+    | MeetComp (_, _, z) -> cb_of z
+    | MeetComp3 (_, _, _, z) -> cb_of z
 
   let rec to_string : type a ac b bc. (a, ac, b, bc) t -> string = function
     | Id _ -> "id"
@@ -347,7 +399,7 @@ module General = struct
     | Snd d -> Eval.General.snd_ d
     | Fork (x, y) -> Eval.General.fork (to_eval x) (to_eval y)
     | Where (_, ca, p) -> Eval.General.where_ ca p
-    | Fn (cb, f) -> Eval.General.fn cb f
+    | Fn (ca, cb, f) -> Eval.General.fn ca cb f
     | Group x -> Eval.General.group (to_eval x)
     | Leaf r -> Eval.General.of_relation r
     | MeetComp (x, y, z) -> Eval.General.meet_compose (to_eval x) (to_eval y) (to_eval z)

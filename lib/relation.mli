@@ -273,6 +273,8 @@ module General : sig
     ('b, 'bcmp) Comparator.t ->
     ('a * 'b, ('acmp, 'bcmp) pair_witness) Comparator.t
 
+  val list_comparator : ('a, 'acmp) Comparator.t -> ('a list, 'acmp list_witness) Comparator.t
+
   val ca : ('a, 'acmp, 'b, 'bcmp) t -> ('a, 'acmp) Comparator.t
   val cb : ('a, 'acmp, 'b, 'bcmp) t -> ('b, 'bcmp) Comparator.t
 

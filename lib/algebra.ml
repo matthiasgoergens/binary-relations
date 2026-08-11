@@ -347,7 +347,12 @@ module General = struct
     module V : SCALAR
 
     val where_ : ('a, 'acmp) Comparator.t -> ('a V.v -> bool V.v) -> ('a, 'acmp, 'a, 'acmp) t
-    val fn : ('b, 'bcmp) Comparator.t -> ('a -> 'b) -> ('a, 'acmp, 'b, 'bcmp) t
+
+    val fn : ('a, 'acmp) Comparator.t -> ('b, 'bcmp) Comparator.t -> ('a -> 'b) -> ('a, 'acmp, 'b, 'bcmp) t
+    (** The graph of a host function. Both comparators, even though [Eval]
+        needs only the range one: a symbolic interpreter must be able to
+        answer "what orders the domain?" for {e every} node, or the planner's
+        rewrites hit a value they cannot rebuild. *)
 
     val group :
       ('a, 'acmp, 'b, 'bcmp) t -> ('a, 'acmp, 'b list, 'bcmp Relation.General.list_witness) t

@@ -251,7 +251,7 @@ module General = struct
     let fork x y = lift2 Eval.General.fork x y
     let group x = lift1 Eval.General.group x
     let where_ ca p = Const (Eval.General.where_ ca p)
-    let fn cb f = Const (Eval.General.fn cb f)
+    let fn ca cb f = Const (Eval.General.fn ca cb f)
     let of_relation r = Const (Eval.General.of_relation r)
     let of_list ma mb l = Const (Eval.General.of_list ma mb l)
   end

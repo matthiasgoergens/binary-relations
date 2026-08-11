@@ -502,6 +502,7 @@ module General = struct
   type 'bcmp list_witness = 'bcmp List_cmp.comparator_witness
 
   let pair_comparator = pair_cmp
+  let list_comparator = List_cmp.comparator
 
   let ca r = r.ca
   let cb r = r.cb
