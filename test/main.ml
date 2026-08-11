@@ -1304,6 +1304,57 @@ let test_eval_general () =
   check_eq_int "materialise makes converse free" ~expect:3 (card back)
 
 (* ------------------------------------------------------------------ *)
+(* Symbolic.General: print it, plan it, run it                         *)
+(* ------------------------------------------------------------------ *)
+
+let test_symbolic_general () =
+  section "Symbolic.General: one program, printed and run";
+  let module R = Relation.General in
+  let w key = { Coarse.key; payload = [] } in
+  let module Q (R4 : Algebra.General.RELATIONS) = struct
+    open R4
+
+    let q =
+      let manages =
+        of_list (module Int) (module Coarse) [ (1, w "anna"); (2, w "bob"); (3, w "andy") ]
+      in
+      let dept = of_list (module Coarse) (module Int) [ (w "anna", 10); (w "bob", 20) ] in
+      manages >> dept >> where_ Int.comparator (let open V in fun d -> d >=. int_ 20)
+  end in
+  let module Sq = Q (Symbolic.General) in
+  let module Eq = Q (Eval.General) in
+  check
+    "the tree prints, predicate structure included"
+    (String.equal
+       (Symbolic.General.to_string Sq.q)
+       "((«3» >> «2») >> where((x >= 20)))");
+  check_eq_int "the tree runs" ~expect:1 (R.card (Symbolic.General.run Sq.q));
+  check_eq_int "eval agrees" ~expect:1 (R.card (Eval.General.to_relation Eq.q));
+  check "no opacity where there is none" (not (Symbolic.General.has_opaque Sq.q))
+
+(* ------------------------------------------------------------------ *)
+(* Rel_incr.General: live updates over carried comparators             *)
+(* ------------------------------------------------------------------ *)
+
+let test_incr_general () =
+  section "Rel_incr.General: live updates over carried comparators";
+  let module G = Rel_incr.General in
+  let module R = Relation.General in
+  let w key = { Coarse.key; payload = [] } in
+  Rel_incr.reset_counters ();
+  let v = G.Var.create (R.of_list (module Int) (module Coarse) [ (1, w "anna"); (2, w "bob") ]) in
+  let dept = G.of_list (module Coarse) (module Int) [ (w "anna", 10); (w "bob", 20) ] in
+  let obs = G.observe G.(Var.watch v >> dept) in
+  Rel_incr.stabilize ();
+  check_eq_int "initial composition" ~expect:2 (R.card (G.Observer.value obs));
+  G.Var.set v
+    (R.of_list (module Int) (module Coarse) [ (1, w "anna"); (2, w "bob"); (3, w "andy") ]);
+  Rel_incr.stabilize ();
+  (* "andy" shares a coarse key with "anna", so it joins to department 10. *)
+  check_eq_int "insert propagates through the coarse key" ~expect:3 (R.card (G.Observer.value obs));
+  check "the delta path was taken" (Rel_incr.delta_updates () >= 1)
+
+(* ------------------------------------------------------------------ *)
 
 let () =
   test_laws ();
@@ -1327,5 +1378,7 @@ let () =
   test_long_cycle_gap ();
   test_general_comparators ();
   test_eval_general ();
+  test_symbolic_general ();
+  test_incr_general ();
   printf "\n%d checks, %d failures\n" !checks !failures;
   if !failures > 0 then exit 1

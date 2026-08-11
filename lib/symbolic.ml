@@ -231,3 +231,146 @@ let rec has_opaque : type a b. (a, b) t -> bool = function
   | Ldiv (x, y) -> has_opaque x || has_opaque y
   | MeetComp (x, y, z) -> has_opaque x || has_opaque y || has_opaque z
   | MeetComp3 (x, m, y, z) -> has_opaque x || has_opaque m || has_opaque y || has_opaque z
+
+(* The four-parameter symbolic interpreter. The comparators arrive as
+   arguments at exactly the leaves {!Algebra.General} hands them to, and are
+   stored in the corresponding nodes, so the tree remains interpretable:
+   [to_eval] hands each one to {!Eval.General}, which needs them. Everything
+   structural — printing, opacity, the shape of the tree — is untouched. *)
+module General = struct
+  module Impl = struct
+    module V = Scalar
+
+    type ('a, 'acmp, 'b, 'bcmp) t =
+      | Id : ('a, 'acmp) Comparator.t -> ('a, 'acmp, 'a, 'acmp) t
+      | Bot : ('a, 'acmp) Comparator.t * ('b, 'bcmp) Comparator.t -> ('a, 'acmp, 'b, 'bcmp) t
+      | Comp : ('a, 'acmp, 'b, 'bcmp) t * ('b, 'bcmp, 'c, 'ccmp) t -> ('a, 'acmp, 'c, 'ccmp) t
+      | Conv : ('a, 'acmp, 'b, 'bcmp) t -> ('b, 'bcmp, 'a, 'acmp) t
+      | Meet : ('a, 'acmp, 'b, 'bcmp) t * ('a, 'acmp, 'b, 'bcmp) t -> ('a, 'acmp, 'b, 'bcmp) t
+      | Join : ('a, 'acmp, 'b, 'bcmp) t * ('a, 'acmp, 'b, 'bcmp) t -> ('a, 'acmp, 'b, 'bcmp) t
+      | Rdiv : ('a, 'acmp, 'c, 'ccmp) t * ('b, 'bcmp, 'c, 'ccmp) t -> ('a, 'acmp, 'b, 'bcmp) t
+      | Ldiv : ('a, 'acmp, 'b, 'bcmp) t * ('a, 'acmp, 'c, 'ccmp) t -> ('b, 'bcmp, 'c, 'ccmp) t
+      | Plus : ('a, 'acmp, 'a, 'acmp) t -> ('a, 'acmp, 'a, 'acmp) t
+      | Star : ('a, 'acmp, 'a, 'acmp) t -> ('a, 'acmp, 'a, 'acmp) t
+      | Fst :
+          ('a * 'b, ('acmp, 'bcmp) Relation.General.pair_witness) Relation.General.desc
+          -> ('a * 'b, ('acmp, 'bcmp) Relation.General.pair_witness, 'a, 'acmp) t
+      | Snd :
+          ('a * 'b, ('acmp, 'bcmp) Relation.General.pair_witness) Relation.General.desc
+          -> ('a * 'b, ('acmp, 'bcmp) Relation.General.pair_witness, 'b, 'bcmp) t
+      | Fork :
+          ('a, 'acmp, 'b, 'bcmp) t * ('a, 'acmp, 'c, 'ccmp) t
+          -> ('a, 'acmp, 'b * 'c, ('bcmp, 'ccmp) Relation.General.pair_witness) t
+      | Where : node * ('a, 'acmp) Comparator.t * ('a -> bool) -> ('a, 'acmp, 'a, 'acmp) t
+      | Fn : ('b, 'bcmp) Comparator.t * ('a -> 'b) -> ('a, 'acmp, 'b, 'bcmp) t
+      | Group : ('a, 'acmp, 'b, 'bcmp) t -> ('a, 'acmp, 'b list, 'bcmp Relation.General.list_witness) t
+      | Leaf : ('a, 'acmp, 'b, 'bcmp) Relation.General.t -> ('a, 'acmp, 'b, 'bcmp) t
+      | MeetComp :
+          ('a, 'acmp, 'b, 'bcmp) t * ('b, 'bcmp, 'c, 'ccmp) t * ('a, 'acmp, 'c, 'ccmp) t
+          -> ('a, 'acmp, 'c, 'ccmp) t
+          (** [(x >> y) ∧ z], fused. Introduced by a planner, never written by
+              hand: it exists so a rewrite the surface algebra has no way to
+              say can be expressed. *)
+      | MeetComp3 :
+          ('a, 'acmp, 'm, 'mcmp) t * ('m, 'mcmp, 'n, 'ncmp) t * ('n, 'ncmp, 'c, 'ccmp) t
+          * ('a, 'acmp, 'c, 'ccmp) t
+          -> ('a, 'acmp, 'c, 'ccmp) t
+          (** [(x >> m >> y) ∧ z], fused three ways so that neither intermediate
+              is built. *)
+
+    let id ca = Id ca
+    let bot ca cb = Bot (ca, cb)
+    let ( >> ) x y = Comp (x, y)
+    let converse x = Conv x
+    let meet x y = Meet (x, y)
+    let join x y = Join (x, y)
+    let rdiv x y = Rdiv (x, y)
+    let ldiv x y = Ldiv (x, y)
+    let plus x = Plus x
+    let star x = Star x
+    let fst_ d = Fst d
+    let snd_ d = Snd d
+    let fork x y = Fork (x, y)
+    let fn cb f = Fn (cb, f)
+    let group x = Group x
+    let of_relation r = Leaf r
+    let of_list ma mb l = Leaf (Relation.General.of_list ma mb l)
+
+    let where_ ca f =
+      let inject, project = Univ.create () in
+      let var = { Scalar.node = Var; ev = (fun u -> Option.value_exn (project u)) } in
+      let body = f var in
+      Where (body.Scalar.node, ca, fun x -> body.Scalar.ev (inject x))
+  end
+
+  include Impl
+
+  module _ : Algebra.General.RELATIONS = Impl
+
+  let rec to_string : type a ac b bc. (a, ac, b, bc) t -> string = function
+    | Id _ -> "id"
+    | Bot _ -> "bot"
+    | Comp (x, y) -> Printf.sprintf "(%s >> %s)" (to_string x) (to_string y)
+    | Conv x -> Printf.sprintf "%s°" (to_string x)
+    | Meet (x, y) -> Printf.sprintf "(%s ∧ %s)" (to_string x) (to_string y)
+    | Join (x, y) -> Printf.sprintf "(%s ∨ %s)" (to_string x) (to_string y)
+    | Rdiv (x, y) -> Printf.sprintf "(%s / %s)" (to_string x) (to_string y)
+    | Ldiv (x, y) -> Printf.sprintf "(%s \\ %s)" (to_string x) (to_string y)
+    | Plus x -> Printf.sprintf "%s⁺" (to_string x)
+    | Star x -> Printf.sprintf "%s*" (to_string x)
+    | Fst _ -> "fst"
+    | Snd _ -> "snd"
+    | Fork (x, y) -> Printf.sprintf "⟨%s, %s⟩" (to_string x) (to_string y)
+    | Where (n, _, _) -> Printf.sprintf "where(%s)" (string_of_node n)
+    | Fn _ -> "fn"
+    | Group x -> Printf.sprintf "group(%s)" (to_string x)
+    | Leaf r -> Printf.sprintf "«%d»" (Relation.General.card r)
+    | MeetComp (x, y, z) ->
+      Printf.sprintf "((%s ⋈ %s) ∧ %s)" (to_string x) (to_string y) (to_string z)
+    | MeetComp3 (x, m, y, z) ->
+      Printf.sprintf "((%s ⋈ %s ⋈ %s) ∧ %s)" (to_string x) (to_string m) (to_string y)
+        (to_string z)
+
+  (** A tree is not an evaluation dead end: it runs through {!Eval.General}. *)
+  let rec to_eval : type a ac b bc. (a, ac, b, bc) t -> (a, ac, b, bc) Eval.General.t = function
+    | Id ca -> Eval.General.id ca
+    | Bot (ca, cb) -> Eval.General.bot ca cb
+    | Comp (x, y) -> Eval.General.( >> ) (to_eval x) (to_eval y)
+    | Conv x -> Eval.General.converse (to_eval x)
+    | Meet (x, y) -> Eval.General.meet (to_eval x) (to_eval y)
+    | Join (x, y) -> Eval.General.join (to_eval x) (to_eval y)
+    | Rdiv (x, y) -> Eval.General.rdiv (to_eval x) (to_eval y)
+    | Ldiv (x, y) -> Eval.General.ldiv (to_eval x) (to_eval y)
+    | Plus x -> Eval.General.plus (to_eval x)
+    | Star x -> Eval.General.star (to_eval x)
+    | Fst d -> Eval.General.fst_ d
+    | Snd d -> Eval.General.snd_ d
+    | Fork (x, y) -> Eval.General.fork (to_eval x) (to_eval y)
+    | Where (_, ca, p) -> Eval.General.where_ ca p
+    | Fn (cb, f) -> Eval.General.fn cb f
+    | Group x -> Eval.General.group (to_eval x)
+    | Leaf r -> Eval.General.of_relation r
+    | MeetComp (x, y, z) -> Eval.General.meet_compose (to_eval x) (to_eval y) (to_eval z)
+    | MeetComp3 (x, m, y, z) ->
+      Eval.General.meet_compose3 (to_eval x) (to_eval m) (to_eval y) (to_eval z)
+
+  let run t = Eval.General.to_relation (to_eval t)
+
+  (** Does this program contain anything the cost model cannot see through? *)
+  let rec has_opaque : type a ac b bc. (a, ac, b, bc) t -> bool = function
+    | Id _ | Bot _ | Fst _ | Snd _ | Leaf _ -> false
+    | Fn _ -> true (* a host function is opaque by construction *)
+    | Where (n, _, _) -> node_is_opaque n
+    | Conv x -> has_opaque x
+    | Plus x -> has_opaque x
+    | Star x -> has_opaque x
+    | Group x -> has_opaque x
+    | Comp (x, y) -> has_opaque x || has_opaque y
+    | Meet (x, y) -> has_opaque x || has_opaque y
+    | Join (x, y) -> has_opaque x || has_opaque y
+    | Fork (x, y) -> has_opaque x || has_opaque y
+    | Rdiv (x, y) -> has_opaque x || has_opaque y
+    | Ldiv (x, y) -> has_opaque x || has_opaque y
+    | MeetComp (x, y, z) -> has_opaque x || has_opaque y || has_opaque z
+    | MeetComp3 (x, m, y, z) -> has_opaque x || has_opaque m || has_opaque y || has_opaque z
+end

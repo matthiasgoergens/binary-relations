@@ -164,3 +164,117 @@ module Observer = struct
 end
 
 let observe t = I.observe (node t)
+
+(* The four-parameter incremental interpreter. Same [Const]/[Node] shape, same
+   delta propagation — the only change is that the relations underneath are
+   [Relation.General.t], so the deltas and recompositions run on carried
+   comparators rather than structural ones. The instrumentation is shared with
+   the two-parameter graph on purpose: "was the delta path taken?" is the same
+   question whichever witnesses the values carry. *)
+module General = struct
+  module Impl = struct
+    module V = Eval.General.V
+
+    type ('a, 'acmp, 'b, 'bcmp) t =
+      | Const of ('a, 'acmp, 'b, 'bcmp) Eval.General.t
+      | Node of ('a, 'acmp, 'b, 'bcmp) Eval.General.t I.t
+
+    let node = function Const x -> I.const x | Node n -> n
+    let of_incr n = Node n
+    let to_incr t = node t
+
+    let lift1 f x = match x with Const a -> Const (f a) | Node n -> Node (I.map n ~f)
+
+    let lift2 f x y =
+      match (x, y) with
+      | Const a, Const b -> Const (f a b)
+      | _ -> Node (I.map2 (node x) (node y) ~f)
+
+    (* A composition node that remembers what it last saw. This is the
+       [Incr_map] pattern: the incremental behaviour lives in a stateful [f],
+       not in a special kind of node. *)
+    let compose_incrementally (type a ac b bc c cc) ()
+        : (a, ac, b, bc) Eval.General.t -> (b, bc, c, cc) Eval.General.t -> (a, ac, c, cc) Eval.General.t =
+      let module R = Relation.General in
+      let prev :
+          ((a, ac, b, bc) R.t * (b, bc, c, cc) R.t * (a, ac, c, cc) R.t) option ref =
+        ref None
+      in
+      fun ex ey ->
+        match (ex, ey) with
+        | Eval.General.Fin rx, Eval.General.Fin ry -> (
+          let recompute () =
+            incr recompute_count;
+            let out = R.compose rx ry in
+            prev := Some (rx, ry, out);
+            Eval.General.Fin out
+          in
+          match !prev with
+          | None -> recompute ()
+          | Some (px, py, out) ->
+            let add_x, del_x = R.delta ~from:px ~to_:rx in
+            let add_y, del_y = R.delta ~from:py ~to_:ry in
+            if not (R.is_empty del_x && R.is_empty del_y) then recompute ()
+            else if R.is_empty add_x && R.is_empty add_y then Eval.General.Fin out
+            else begin
+              (* (x ∪ Δx) ∘ (y ∪ Δy) = x∘y ∪ x'∘Δy ∪ Δx∘y', which is
+                 distributivity and nothing more. *)
+              let out' =
+                R.union out (R.union (R.compose rx add_y) (R.compose add_x ry))
+              in
+              incr delta_count;
+              prev := Some (rx, ry, out');
+              Eval.General.Fin out'
+            end)
+        | _ -> Eval.General.( >> ) ex ey
+
+    let ( >> ) x y =
+      match (x, y) with
+      | Const a, Const b -> Const (Eval.General.( >> ) a b)
+      | _ -> Node (I.map2 (node x) (node y) ~f:(compose_incrementally ()))
+
+    let id ca = Const (Eval.General.id ca)
+    let bot ca cb = Const (Eval.General.bot ca cb)
+    let fst_ d = Const (Eval.General.fst_ d)
+    let snd_ d = Const (Eval.General.snd_ d)
+    let converse x = lift1 Eval.General.converse x
+    let meet x y = lift2 Eval.General.meet x y
+
+    (* Union is incremental without any bookkeeping: the result of a union
+       shares structure with both arguments, so the next delta downstream is
+       cheap for free. *)
+    let join x y = lift2 Eval.General.join x y
+    let rdiv x y = lift2 Eval.General.rdiv x y
+    let ldiv x y = lift2 Eval.General.ldiv x y
+    let plus x = lift1 Eval.General.plus x
+    let star x = lift1 Eval.General.star x
+    let fork x y = lift2 Eval.General.fork x y
+    let group x = lift1 Eval.General.group x
+    let where_ ca p = Const (Eval.General.where_ ca p)
+    let fn cb f = Const (Eval.General.fn cb f)
+    let of_relation r = Const (Eval.General.of_relation r)
+    let of_list ma mb l = Const (Eval.General.of_list ma mb l)
+  end
+
+  include Impl
+
+  module _ : Algebra.General.RELATIONS = Impl
+
+  (** {2 Inputs and outputs} *)
+
+  module Var = struct
+    type ('a, 'acmp, 'b, 'bcmp) t = ('a, 'acmp, 'b, 'bcmp) Eval.General.t I.Var.t
+
+    let create r = I.Var.create (Eval.General.of_relation r)
+    let set v r = I.Var.set v (Eval.General.of_relation r)
+    let watch v = Node (I.Var.watch v)
+  end
+
+  module Observer = struct
+    type ('a, 'acmp, 'b, 'bcmp) t = ('a, 'acmp, 'b, 'bcmp) Eval.General.t I.Observer.t
+
+    let value t = Eval.General.to_relation (I.Observer.value_exn t)
+  end
+
+  let observe t = I.observe (node t)
+end
