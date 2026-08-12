@@ -61,6 +61,41 @@ module Sample = struct
   let to_sample { a; b; c } = { L.a = Eval.of_list a; b = Eval.of_list b; c = Eval.of_list c }
 end
 
+(* The same samples, interpreted at four parameters. *)
+module Sample4 = struct
+  module L = Laws.General.Make (Eval.General)
+
+  type t = {
+    a : (int * int) list;
+    b : (int * int) list;
+    c : (int * int) list;
+  }
+  [@@deriving sexp_of]
+
+  let elem = Base_quickcheck.Generator.int_inclusive 0 5
+
+  let rel =
+    let open Base_quickcheck.Generator.Let_syntax in
+    let%bind n = Base_quickcheck.Generator.int_inclusive 0 12 in
+    Base_quickcheck.Generator.list_with_length
+      ~length:n
+      (Base_quickcheck.Generator.both elem elem)
+
+  let quickcheck_generator =
+    let open Base_quickcheck.Generator.Let_syntax in
+    let%map a = rel and b = rel and c = rel in
+    { a; b; c }
+
+  let quickcheck_shrinker = Base_quickcheck.Shrinker.atomic
+
+  let to_sample { a; b; c } =
+    {
+      L.a = Eval.General.of_list (module Int) (module Int) a;
+      b = Eval.General.of_list (module Int) (module Int) b;
+      c = Eval.General.of_list (module Int) (module Int) c;
+    }
+end
+
 let qc_config = { Base_quickcheck.Test.default_config with test_count = 300 }
 
 (* ------------------------------------------------------------------ *)
@@ -1213,6 +1248,235 @@ let test_structural_comparison_cost () =
   printf "      assertion fails, which is the reminder to retire it.\n"
 
 (* ------------------------------------------------------------------ *)
+(* Relation.General: the four-parameter interface                      *)
+(* ------------------------------------------------------------------ *)
+
+(* The slice's discriminating case, rerun against the real library: a
+   comparator that deliberately ignores a large payload, so "apple" and
+   "avocado" are ONE key. A card of 1 is impossible under [Poly], so it
+   proves the carried comparator is genuinely in force, not merely carried. *)
+module Coarse = struct
+  module T = struct
+    type t = { key : string; payload : string list }
+
+    let compare a b = Char.compare a.key.[0] b.key.[0]
+    let sexp_of_t t = Sexp.Atom t.key
+  end
+
+  include T
+  include Comparator.Make (T)
+end
+
+let test_general_comparators () =
+  section "Relation.General: comparators are in force, not just carried";
+  let module G = Relation.General in
+  let w key = { Coarse.key; payload = List.init 8 ~f:(fun k -> sprintf "w%d" k) } in
+  let r =
+    G.of_list (module Int) (module Coarse)
+      [ (1, w "apple"); (2, w "avocado"); (3, w "beet"); (1, w "cherry") ]
+  in
+  check_eq_int "General card counts distinct keys" ~expect:4 (G.card r);
+  let collapsed = G.of_list (module Int) (module Coarse) [ (1, w "apple"); (1, w "avocado") ] in
+  check_eq_int "apple+avocado collapse to one pair (Poly would say 2)" ~expect:1 (G.card collapsed);
+  check_eq_int "General image of collapsed key" ~expect:1 (Set.length (G.image collapsed 1));
+  let back = G.of_list (module Coarse) (module Int) [ (w "apple", 10); (w "beet", 20) ] in
+  let rr = G.compose r back in
+  check_eq_int "General compose through a coarse middle" ~expect:3 (G.card rr);
+  let c = G.converse r in
+  check_eq_int "General converse preserves card" ~expect:4 (G.card c);
+  (* "avocado" and "apple" are the same coarse key, so its image under the
+     converse collects both right-hand sides. *)
+  check_eq_int "General converse preimage-as-image" ~expect:2 (Set.length (G.image c (w "avocado")));
+  let nums = G.of_list (module Int) (module Int) [ (1, 100); (1, 200); (3, 300) ] in
+  let f = G.fork nums nums in
+  check_eq_int "General fork derives its own witness" ~expect:5 (G.card f);
+  let f2 = G.fork f nums in
+  check_eq_int "General nested fork needs no new machinery" ~expect:9 (G.card f2);
+  let g = G.group r in
+  check_eq_int "General group" ~expect:3 (G.card g);
+  let e = G.empty Int.comparator Coarse.comparator in
+  check_eq_int "General empty is a function of the comparators" ~expect:0 (G.card e);
+  let u = G.union r (G.of_list (module Int) (module Coarse) [ (5, w "durian") ]) in
+  check_eq_int "General union with matching witnesses" ~expect:5 (G.card u)
+
+(* ------------------------------------------------------------------ *)
+(* Eval.General: the four-parameter algebra, end to end                *)
+(* ------------------------------------------------------------------ *)
+
+let test_eval_general () =
+  section "Eval.General: the four-parameter algebra end to end";
+  let module E = Eval.General in
+  let module R = Relation.General in
+  let w key = { Coarse.key; payload = [] } in
+  let card t = R.card (E.to_relation t) in
+  (* "anna" and "andy" share a coarse key, so both join to department 10. *)
+  let manages =
+    E.of_list (module Int) (module Coarse) [ (1, w "anna"); (2, w "bob"); (3, w "andy") ]
+  in
+  let dept = E.of_list (module Coarse) (module Int) [ (w "anna", 10); (w "bob", 20) ] in
+  let open E in
+  let r = manages >> dept in
+  check_eq_int "compose through a coarse middle" ~expect:3 (card r);
+  check_eq_int "converse of a composition" ~expect:3 (card (converse r));
+  let seniors = r >> where_ Int.comparator (fun d -> d >= 20) in
+  check_eq_int "where_ filters by a coreflexive" ~expect:1 (card seniors);
+  let both = fork r r >> fst_ (R.Prod (R.Base Int.comparator, R.Base Int.comparator)) in
+  check_eq_int "fork then project is the identity here" ~expect:3 (card both);
+  check_eq_int "id is a left unit" ~expect:3 (card (id Int.comparator >> r));
+  check_eq_int "bot is a join unit" ~expect:3 (card (join (bot Int.comparator Int.comparator) r));
+  let chain = of_list (module Int) (module Int) [ (1, 2); (2, 3) ] in
+  check_eq_int "plus adds the transitive pairs" ~expect:3 (card (plus chain));
+  check_eq_int "star is reflexive on the carrier only" ~expect:6 (card (star chain));
+  (* Scalar equality under the carried comparator, against the structural one. *)
+  let people = of_list (module Int) (module Coarse) [ (1, w "apple") ] in
+  let coarse_eq =
+    people
+    >> where_ Coarse.comparator
+         (let open V in
+          fun x -> eq_with Coarse.comparator x (lit (w "avocado")))
+  in
+  check_eq_int "eq_with follows the carried comparator" ~expect:1 (card coarse_eq);
+  let structural_eq =
+    people
+    >> where_ Coarse.comparator
+         (let open V in
+          fun x -> x =. lit (w "avocado"))
+  in
+  check_eq_int "=. stays structural" ~expect:0 (card structural_eq);
+  (* "run the function backwards": materialise on a carrier, then converse. *)
+  let succs = fn Int.comparator Int.comparator succ in
+  check
+    "converse of an unbounded function graph announces"
+    (try
+       ignore (converse succs);
+       false
+     with Eval.Unbounded _ -> true);
+  let back = converse (materialise ~ca:Int.comparator ~dom:[ 1; 2; 3 ] succs) in
+  check_eq_int "materialise makes converse free" ~expect:3 (card back)
+
+(* ------------------------------------------------------------------ *)
+(* Symbolic.General: print it, plan it, run it                         *)
+(* ------------------------------------------------------------------ *)
+
+let test_symbolic_general () =
+  section "Symbolic.General: one program, printed and run";
+  let module R = Relation.General in
+  let w key = { Coarse.key; payload = [] } in
+  let module Q (R4 : Algebra.General.RELATIONS) = struct
+    open R4
+
+    let q =
+      let manages =
+        of_list (module Int) (module Coarse) [ (1, w "anna"); (2, w "bob"); (3, w "andy") ]
+      in
+      let dept = of_list (module Coarse) (module Int) [ (w "anna", 10); (w "bob", 20) ] in
+      manages >> dept >> where_ Int.comparator (let open V in fun d -> d >=. int_ 20)
+  end in
+  let module Sq = Q (Symbolic.General) in
+  let module Eq = Q (Eval.General) in
+  check
+    "the tree prints, predicate structure included"
+    (String.equal
+       (Symbolic.General.to_string Sq.q)
+       "((«3» >> «2») >> where((x >= 20)))");
+  check_eq_int "the tree runs" ~expect:1 (R.card (Symbolic.General.run Sq.q));
+  check_eq_int "eval agrees" ~expect:1 (R.card (Eval.General.to_relation Eq.q));
+  check "no opacity where there is none" (not (Symbolic.General.has_opaque Sq.q))
+
+(* ------------------------------------------------------------------ *)
+(* Rel_incr.General: live updates over carried comparators             *)
+(* ------------------------------------------------------------------ *)
+
+let test_incr_general () =
+  section "Rel_incr.General: live updates over carried comparators";
+  let module G = Rel_incr.General in
+  let module R = Relation.General in
+  let w key = { Coarse.key; payload = [] } in
+  Rel_incr.reset_counters ();
+  let v = G.Var.create (R.of_list (module Int) (module Coarse) [ (1, w "anna"); (2, w "bob") ]) in
+  let dept = G.of_list (module Coarse) (module Int) [ (w "anna", 10); (w "bob", 20) ] in
+  let obs = G.observe G.(Var.watch v >> dept) in
+  Rel_incr.stabilize ();
+  check_eq_int "initial composition" ~expect:2 (R.card (G.Observer.value obs));
+  G.Var.set v
+    (R.of_list (module Int) (module Coarse) [ (1, w "anna"); (2, w "bob"); (3, w "andy") ]);
+  Rel_incr.stabilize ();
+  (* "andy" shares a coarse key with "anna", so it joins to department 10. *)
+  check_eq_int "insert propagates through the coarse key" ~expect:3 (R.card (G.Observer.value obs));
+  check "the delta path was taken" (Rel_incr.delta_updates () >= 1)
+
+(* ------------------------------------------------------------------ *)
+(* Laws, planner and surface at four parameters                        *)
+(* ------------------------------------------------------------------ *)
+
+let test_laws_general () =
+  section "Laws.General: the same laws, property-checked against Eval.General";
+  let module L = Laws.General.Make (Eval.General) in
+  let by_group = Hashtbl.create (module String) in
+  List.iter L.all ~f:(fun law ->
+    let ok = ref true in
+    (try
+       Base_quickcheck.Test.run_exn
+         ~config:qc_config
+         (module Sample4)
+         ~f:(fun s -> if not (law.L.check (Sample4.to_sample s)) then failwith "law violated")
+     with
+    | e ->
+      ok := false;
+      incr failures;
+      printf "FAIL  law %s/%s\n      %s\n" law.L.group law.L.name (Exn.to_string e));
+    incr checks;
+    Hashtbl.update by_group law.L.group ~f:(function
+      | None -> (1, if !ok then 0 else 1)
+      | Some (n, f) -> (n + 1, f + if !ok then 0 else 1)));
+  Hashtbl.iteri by_group ~f:(fun ~key ~data:(n, f) ->
+    printf "   %-20s %2d laws, %d failing\n" key n f)
+
+let test_plan_general () =
+  section "Plan.General: fusion fires and the plan is sound";
+  let module S = Symbolic.General in
+  let module R = Relation.General in
+  let n = 300 in
+  (* A hub with a ring through the spokes: skewed, so the unfused triangle
+     materialises far more than the result. *)
+  let edges =
+    R.of_list (module Int) (module Int)
+      (List.concat (List.init n ~f:(fun i -> [ (0, i); (i, (i + 1) % n) ])))
+  in
+  let e = S.of_relation edges in
+  let tri = S.(meet (e >> e) e) in
+  let opt = Plan.General.optimise tri in
+  check "the meet is fused into the composition"
+    (String.is_substring (S.to_string opt) ~substring:"⋈");
+  check "the planned tree agrees with the written one" (R.equal (S.run opt) (S.run tri));
+  let chain = S.(e >> e >> e >> e) in
+  check "re-association agrees with the written chain"
+    (R.equal (S.run (Plan.General.optimise chain)) (S.run chain))
+
+let test_query_general () =
+  section "Query.General: the surface with points, at four parameters";
+  let module Q = Query.General in
+  let module R = Relation.General in
+  let edges = R.of_list (module Int) (module Int) [ (1, 2); (2, 3); (1, 3); (3, 4) ] in
+  let two_steps =
+    Q.run ~cmp:Int.comparator (fun x ->
+      let open Q in
+      let* y = step edges x in
+      let* z = step edges y in
+      ret z)
+  in
+  check_eq_int "a chain compiles and runs" ~expect:3 (R.card two_steps);
+  let triangles =
+    Q.run ~cmp:Int.comparator (fun x ->
+      let open Q in
+      let* y = step edges x in
+      let* z = step edges y in
+      let* () = constrain edges x z in
+      ret z)
+  in
+  check_eq_int "a cycle closes by meet" ~expect:1 (R.card triangles)
+
+(* ------------------------------------------------------------------ *)
 
 let () =
   test_laws ();
@@ -1234,5 +1498,12 @@ let () =
   test_structural_comparison_cost ();
   test_filter_pushdown_gap ();
   test_long_cycle_gap ();
+  test_general_comparators ();
+  test_eval_general ();
+  test_symbolic_general ();
+  test_incr_general ();
+  test_laws_general ();
+  test_plan_general ();
+  test_query_general ();
   printf "\n%d checks, %d failures\n" !checks !failures;
   if !failures > 0 then exit 1

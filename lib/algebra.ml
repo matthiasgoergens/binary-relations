@@ -32,6 +32,8 @@
     [module Q (R : RELATIONS) = struct ... end], and interpreting it is
     applying it to {!Eval}, {!Symbolic} or an incremental backend. *)
 
+open! Base
+
 (** Composition alone. Everything here is available even when no identity can
     be represented, which for finite relations over unbounded types is the
     normal situation rather than an edge case. *)
@@ -183,6 +185,16 @@ module type SCALAR = sig
   val str : string -> string v
   val bool_ : bool -> bool v
   val ( =. ) : 'a v -> 'a v -> bool v
+  (** Structural equality ([Poly.equal]). The wrong tool for values whose
+      comparison must not walk the representation — graph handles, lazy
+      links; the merlin case. For those, use {!eq_with} with the carried
+      comparator, or project a scalar with {!field} and compare that. *)
+
+  val eq_with : ('a, 'w) Comparator.t -> 'a v -> 'a v -> bool v
+  (** Equality under a carried comparator. This is what [=.] cannot be: a
+      value-level equality that follows the same comparator the relations are
+      ordered by, so a predicate over coarse values does not walk their
+      structure. *)
   val ( <>. ) : 'a v -> 'a v -> bool v
   val ( <. ) : 'a v -> 'a v -> bool v
   val ( <=. ) : 'a v -> 'a v -> bool v
@@ -246,4 +258,128 @@ module type EQ_RELATIONS = sig
 
   val equal : ('a, 'b) t -> ('a, 'b) t -> bool
   val subset : ('a, 'b) t -> ('a, 'b) t -> bool
+end
+
+(** The same ladder over comparator-carrying relations — the four-parameter
+    target of the port recorded in [NOTES.md]. The rungs, the joints and the
+    laws are unchanged; what changes is where comparators enter as {e value}
+    arguments, which is exactly the set of places the two-parameter versions
+    got one silently from [Poly]:
+
+    - [bot], [id], [where_], [fn] take a comparator, because an unbounded or
+      empty value carries no relation to recover one from;
+    - [fst_]/[snd_] take a {{!Relation.General.desc} descriptor}, because a
+      product comparator cannot be decomposed ([Derived2] has no inverse) and
+      the descriptor is what remembers the components;
+    - [of_list] takes first-class comparator modules, [of_relation] needs
+      nothing — a [Relation.General.t] already carries its own;
+    - everything else keeps its shape: the comparators travel {e inside} the
+      values, and [fork]'s result witness is still computed from its inputs'.
+
+    This is the concrete form of a refutation the port plan records: the move
+    to four parameters does {e not} leave the signatures touching only types.
+    The extra arguments are the honest price of ordering that is not
+    structural. *)
+module General = struct
+  module type SEMIGROUPOID = sig
+    type ('a, 'acmp, 'b, 'bcmp) t
+
+    val ( >> ) : ('a, 'acmp, 'b, 'bcmp) t -> ('b, 'bcmp, 'c, 'ccmp) t -> ('a, 'acmp, 'c, 'ccmp) t
+  end
+
+  module type CATEGORY = sig
+    include SEMIGROUPOID
+
+    val id : ('a, 'acmp) Comparator.t -> ('a, 'acmp, 'a, 'acmp) t
+  end
+
+  module type SEMI_ALLEGORY = sig
+    include SEMIGROUPOID
+
+    val converse : ('a, 'acmp, 'b, 'bcmp) t -> ('b, 'bcmp, 'a, 'acmp) t
+    val meet : ('a, 'acmp, 'b, 'bcmp) t -> ('a, 'acmp, 'b, 'bcmp) t -> ('a, 'acmp, 'b, 'bcmp) t
+  end
+
+  module type ALLEGORY = sig
+    include SEMI_ALLEGORY
+
+    val id : ('a, 'acmp) Comparator.t -> ('a, 'acmp, 'a, 'acmp) t
+  end
+
+  module type UNION_ALLEGORY = sig
+    include ALLEGORY
+
+    val join : ('a, 'acmp, 'b, 'bcmp) t -> ('a, 'acmp, 'b, 'bcmp) t -> ('a, 'acmp, 'b, 'bcmp) t
+    val bot : ('a, 'acmp) Comparator.t -> ('b, 'bcmp) Comparator.t -> ('a, 'acmp, 'b, 'bcmp) t
+  end
+
+  module type DIVISION_ALLEGORY = sig
+    include UNION_ALLEGORY
+
+    val rdiv : ('a, 'acmp, 'c, 'ccmp) t -> ('b, 'bcmp, 'c, 'ccmp) t -> ('a, 'acmp, 'b, 'bcmp) t
+    val ldiv : ('a, 'acmp, 'b, 'bcmp) t -> ('a, 'acmp, 'c, 'ccmp) t -> ('b, 'bcmp, 'c, 'ccmp) t
+  end
+
+  module type KLEENE_SEMIGROUPOID = sig
+    include SEMIGROUPOID
+
+    val plus : ('a, 'acmp, 'a, 'acmp) t -> ('a, 'acmp, 'a, 'acmp) t
+  end
+
+  module type KLEENE_ALLEGORY = sig
+    include DIVISION_ALLEGORY
+
+    val plus : ('a, 'acmp, 'a, 'acmp) t -> ('a, 'acmp, 'a, 'acmp) t
+    val star : ('a, 'acmp, 'a, 'acmp) t -> ('a, 'acmp, 'a, 'acmp) t
+  end
+
+  module type PRODUCTS = sig
+    type ('a, 'acmp, 'b, 'bcmp) t
+
+    val fst_ :
+      ('a * 'b, ('acmp, 'bcmp) Relation.General.pair_witness) Relation.General.desc ->
+      ('a * 'b, ('acmp, 'bcmp) Relation.General.pair_witness, 'a, 'acmp) t
+
+    val snd_ :
+      ('a * 'b, ('acmp, 'bcmp) Relation.General.pair_witness) Relation.General.desc ->
+      ('a * 'b, ('acmp, 'bcmp) Relation.General.pair_witness, 'b, 'bcmp) t
+
+    val fork :
+      ('a, 'acmp, 'b, 'bcmp) t ->
+      ('a, 'acmp, 'c, 'ccmp) t ->
+      ('a, 'acmp, 'b * 'c, ('bcmp, 'ccmp) Relation.General.pair_witness) t
+  end
+
+  module type RELATIONS = sig
+    include KLEENE_ALLEGORY
+    include PRODUCTS with type ('a, 'acmp, 'b, 'bcmp) t := ('a, 'acmp, 'b, 'bcmp) t
+
+    module V : SCALAR
+
+    val where_ : ('a, 'acmp) Comparator.t -> ('a V.v -> bool V.v) -> ('a, 'acmp, 'a, 'acmp) t
+
+    val fn : ('a, 'acmp) Comparator.t -> ('b, 'bcmp) Comparator.t -> ('a -> 'b) -> ('a, 'acmp, 'b, 'bcmp) t
+    (** The graph of a host function. Both comparators, even though [Eval]
+        needs only the range one: a symbolic interpreter must be able to
+        answer "what orders the domain?" for {e every} node, or the planner's
+        rewrites hit a value they cannot rebuild. *)
+
+    val group :
+      ('a, 'acmp, 'b, 'bcmp) t -> ('a, 'acmp, 'b list, 'bcmp Relation.General.list_witness) t
+
+    val of_list :
+      ('a, 'acmp) Comparator.Module.t ->
+      ('b, 'bcmp) Comparator.Module.t ->
+      ('a * 'b) list ->
+      ('a, 'acmp, 'b, 'bcmp) t
+
+    val of_relation : ('a, 'acmp, 'b, 'bcmp) Relation.General.t -> ('a, 'acmp, 'b, 'bcmp) t
+  end
+
+  module type EQ_RELATIONS = sig
+    include RELATIONS
+
+    val equal : ('a, 'acmp, 'b, 'bcmp) t -> ('a, 'acmp, 'b, 'bcmp) t -> bool
+    val subset : ('a, 'acmp, 'b, 'bcmp) t -> ('a, 'acmp, 'b, 'bcmp) t -> bool
+  end
 end

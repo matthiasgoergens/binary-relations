@@ -206,6 +206,55 @@ representation was chosen by somebody else. That is the third finding this
 session from pointing the library at foreign code, after `Pset` and the
 `Unbounded` over-refusal.
 
+### The port landed, and the data that forced it now passes
+
+The four-parameter port is built, on branch `four-param` (staging in
+`PORT-PLAN.md` in the notes repo): `Relation.General` carries real comparator
+witnesses, and the whole stack exists at four parameters —
+`Algebra.General`, `Eval.General`, `Symbolic.General`, `Rel_incr.General`,
+`Plan.General`, `Query.General`, `Laws.General`. The two-parameter Poly
+façade is unchanged; every public signature in it is literally the same.
+
+Three findings from the port itself:
+
+- **A polymorphic `empty` value over a derived comparator is not expressible
+  from outside Base** — the value restriction meets `Set.t`'s invariance, and
+  neither record literals, `lazy` payloads nor functor bodies lift it
+  (verified on the compiler). Had the public pair sets taken the derived
+  witness, `empty` — and with it the algebra's `bot` — would have had to
+  become a function. So the record carries the pair set's witness as a free
+  parameter: the façade fixes it at `Poly`, `General` fixes it at the
+  derived product, and converting between the two is a rebuild.
+- **The signature grows value arguments, not just type parameters** — exactly
+  where the two-parameter version got a comparator silently from `Poly`:
+  `bot`, `id`, `where_`, `fn` take comparators; `fst_`/`snd_` take a
+  comparator *descriptor* (a `Base`/`Prod` GADT), because `Derived2` has no
+  inverse. `fn` takes both comparators — the planner's absorbing-`Bot`
+  rewrite must rebuild `Bot` at a new range type, which needs
+  `ca_of`/`cb_of` on symbolic trees to be total.
+- **The unbounded constructors were never comparator-free, they were
+  comparator-implicit.** `Corefl` now stores its type's comparator;
+  `Pfun`/`Pset` store their range's. Every `Poly.equal` of the old evaluator
+  is a `compare` of a carried comparator.
+
+And the validation, on the same file that refuted the premise. Rebuilt from
+merlin's 164 `.cmt` files (78 950 uids, 201 866 pairs), under an 8 GB
+virtual-memory cap:
+
+- **Poly façade:** builds the pair set in 115 ms, then `Out of memory`
+  building the backward index — same place as before.
+- **`Relation.General` with merlin's own comparators** (`Lid.compare`'s three
+  scalars, `Shape.Uid.compare`): build **193 ms**, backward index **316 ms**,
+  and the answers agree with a fold over merlin's own structures (301 = 301
+  hits on 300 real locations). The reverse lookup merlin's index cannot
+  answer takes **2 ms** by preimage against **137 s** for the fold — the fold
+  storms the granular-marshal LRU, which is its own data point about lazy
+  structures. Probe: `merlin-probe/probe3.ml` in the notes repo.
+
+The scalar language gained `eq_with` for the same reason: `=.` is structural
+and stays so, and equality under a carried comparator is now sayable in a
+predicate the planner can still read back.
+
 ## The signature ladder## The signature ladder, and two operations that are not there
 
 The brief sketches one flat `ALLEGORY`. The code cuts it as the brief says it

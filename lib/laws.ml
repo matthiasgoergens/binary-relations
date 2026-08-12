@@ -197,3 +197,169 @@ module Make (R : Algebra.EQ_RELATIONS) = struct
       ]
       ~f:(fun (group, laws) -> List.map laws ~f:(fun (name, check) -> { group; name; check }))
 end
+
+(* The laws over the four-parameter algebra. The law TEXT is unchanged — the
+   laws are the whole point of the ladder, and changing the witnesses cannot
+   be allowed to change them. What changes is only how the four constants
+   arrive: [id], [bot], [fst_], [snd_] are values at [(int, int)] here because
+   the integers supply their comparator. (The text is duplicated rather than
+   shared: the two-param and four-param operator types differ in arity, and a
+   shared functor over both says nothing readable. When the two-parameter
+   surface retires, its copy retires with it.) *)
+module General = struct
+  module Make (R : Algebra.General.EQ_RELATIONS) = struct
+    open R
+
+    type ii = (int, Int.comparator_witness, int, Int.comparator_witness) R.t
+
+    type sample = { a : ii; b : ii; c : ii }
+
+    type law = {
+      group : string;
+      name : string;
+      check : sample -> bool;
+    }
+
+    let eq = R.equal
+    let sub = R.subset
+
+    let int2 =
+      Relation.General.Prod
+        (Relation.General.Base Int.comparator, Relation.General.Base Int.comparator)
+
+    let id = R.id Int.comparator
+    let bot = R.bot Int.comparator Int.comparator
+    let fst_ = R.fst_ int2
+    let snd_ = R.snd_ int2
+
+    (* Bottoms at the product types, for [fork-bot]: at four parameters there
+       is no polymorphic bottom value, only bottom at a witness. *)
+    let bot2 =
+      R.bot Int.comparator
+        (Relation.General.pair_comparator Int.comparator Int.comparator)
+
+    let bot3 =
+      R.bot Int.comparator
+        (Relation.General.pair_comparator Int.comparator
+           (Relation.General.pair_comparator Int.comparator Int.comparator))
+
+    (* The coreflexive on the domain of [r]. *)
+    let dom_ r = meet id (r >> converse r)
+
+    let category =
+      [
+        ("compose-associative", fun { a; b; c } -> eq (a >> b >> c) (a >> (b >> c)));
+        ("id-left-unit", fun { a; _ } -> eq (id >> a) a);
+        ("id-right-unit", fun { a; _ } -> eq (a >> id) a);
+      ]
+
+    let allegory =
+      [
+        ("converse-involution", fun { a; _ } -> eq (converse (converse a)) a);
+        ("converse-antidistribution", fun { a; b; _ } ->
+          eq (converse (a >> b)) (converse b >> converse a));
+        ("converse-meet", fun { a; b; _ } ->
+          eq (converse (meet a b)) (meet (converse a) (converse b)));
+        ("converse-id", fun _ -> eq (converse (meet id bot)) (meet id bot));
+        ("meet-idempotent", fun { a; _ } -> eq (meet a a) a);
+        ("meet-commutative", fun { a; b; _ } -> eq (meet a b) (meet b a));
+        ("meet-associative", fun { a; b; c } -> eq (meet (meet a b) c) (meet a (meet b c)));
+        (* The modular law. Not derivable from the others, and the thing that
+           makes meet interact correctly with composition. *)
+        ("modular-law", fun { a; b; c } ->
+          sub (meet (a >> b) c) (a >> meet b (converse a >> c)));
+        ("coreflexive-self-converse", fun { a; _ } ->
+          let co = meet id a in
+          eq (converse co) co);
+        (* Oliveira (5.227): for coreflexives, composition and meet coincide. *)
+        ("coreflexive-compose-is-meet", fun { a; b; _ } ->
+          let c1 = meet id a and c2 = meet id b in
+          eq (c1 >> c2) (meet c1 c2));
+        ("coreflexive-idempotent", fun { a; _ } ->
+          let c = meet id a in
+          eq (c >> c) c);
+      ]
+
+    let union_allegory =
+      [
+        ("join-idempotent", fun { a; _ } -> eq (join a a) a);
+        ("join-commutative", fun { a; b; _ } -> eq (join a b) (join b a));
+        ("join-associative", fun { a; b; c } -> eq (join (join a b) c) (join a (join b c)));
+        ("absorption-meet-join", fun { a; b; _ } -> eq (meet a (join a b)) a);
+        ("absorption-join-meet", fun { a; b; _ } -> eq (join a (meet a b)) a);
+        ("meet-distributes-over-join", fun { a; b; c } ->
+          eq (meet a (join b c)) (join (meet a b) (meet a c)));
+        ("join-distributes-over-meet", fun { a; b; c } ->
+          eq (join a (meet b c)) (meet (join a b) (join a c)));
+        ("bot-join-unit", fun { a; _ } -> eq (join a bot) a);
+        ("bot-meet-absorbing", fun { a; _ } -> eq (meet a bot) bot);
+        ("bot-compose-left", fun { a; _ } -> eq (bot >> a) bot);
+        ("bot-compose-right", fun { a; _ } -> eq (a >> bot) bot);
+        ("compose-distributes-join-left", fun { a; b; c } ->
+          eq (a >> join b c) (join (a >> b) (a >> c)));
+        ("compose-distributes-join-right", fun { a; b; c } ->
+          eq (join a b >> c) (join (a >> c) (b >> c)));
+        (* Only an inclusion: composition does not distribute over meet. *)
+        ("compose-submeet", fun { a; b; c } -> sub (a >> meet b c) (meet (a >> b) (a >> c)));
+      ]
+
+    (* The restricted residuals, exactly as above: the textbook Galois
+       connection needs [top], which is not a finite value, so the two laws
+       stated are Kahl's. *)
+    let rng_ r = meet id (converse r >> r)
+
+    let division_allegory =
+      [
+        ("rdiv-sound", fun { a; b; c } -> (not (sub c (rdiv a b))) || sub (c >> b) a);
+        ("rdiv-maximal-on-carrier", fun { a; b; c } ->
+          (not (sub (c >> b) a)) || sub (dom_ a >> c >> dom_ b) (rdiv a b));
+        ("ldiv-sound", fun { a; b; c } -> (not (sub c (ldiv a b))) || sub (a >> c) b);
+        ("ldiv-maximal-on-carrier", fun { a; b; c } ->
+          (not (sub (a >> c) b)) || sub (rng_ a >> c >> rng_ b) (ldiv a b));
+        ("rdiv-cancel", fun { a; b; _ } -> sub (rdiv a b >> b) a);
+        ("ldiv-cancel", fun { a; b; _ } -> sub (a >> ldiv a b) b);
+        ("rdiv-galois-when-carriers-cover", fun { a; b; c } ->
+          let c = dom_ a >> c >> dom_ b in
+          Bool.equal (sub (c >> b) a) (sub c (rdiv a b)));
+      ]
+
+    let kleene =
+      [
+        ("plus-contains-base", fun { a; _ } -> sub a (plus a));
+        ("plus-transitive", fun { a; _ } -> sub (plus a >> plus a) (plus a));
+        ("plus-unfold", fun { a; _ } -> eq (plus a) (join a (a >> plus a)));
+        ("plus-is-least", fun { a; _ } -> eq (plus a) (plus (plus a)));
+        ("star-contains-plus", fun { a; _ } -> sub (plus a) (star a));
+        ("star-idempotent", fun { a; _ } -> eq (star (star a)) (star a));
+        ("star-transitive", fun { a; _ } -> eq (star a >> star a) (star a));
+        ("plus-via-star", fun { a; _ } -> eq (plus a) (a >> star a));
+      ]
+
+    (* Products in an allegory, not in a cartesian category: the projection
+       laws hold only up to a domain restriction. *)
+    let products =
+      [
+        ("fork-fst-restricted", fun { a; b; _ } -> eq (fork a b >> fst_) (dom_ b >> a));
+        ("fork-snd-restricted", fun { a; b; _ } -> eq (fork a b >> snd_) (dom_ a >> b));
+        ("fork-fst-included", fun { a; b; _ } -> sub (fork a b >> fst_) a);
+        ("fork-snd-included", fun { a; b; _ } -> sub (fork a b >> snd_) b);
+        ("fork-diagonal", fun { a; _ } -> eq (fork a a >> fst_) (fork a a >> snd_));
+        ("fork-bot", fun { a; _ } -> eq (fork a bot2) bot3);
+        (* ×-fusion, Oliveira (2.26): only one inclusion survives, because Rel
+           is not cartesian. *)
+        ("fork-fusion-inclusion", fun { a; b; c } -> sub (c >> fork a b) (fork (c >> a) (c >> b)));
+      ]
+
+    let all : law list =
+      List.concat_map
+        [
+          ("category", category);
+          ("allegory", allegory);
+          ("union allegory", union_allegory);
+          ("division allegory", division_allegory);
+          ("Kleene", kleene);
+          ("products", products);
+        ]
+        ~f:(fun (group, laws) -> List.map laws ~f:(fun (name, check) -> { group; name; check }))
+  end
+end
