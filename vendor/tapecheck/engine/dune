@@ -1,0 +1,6 @@
+(library
+ (name tape_engine)
+ (wrapped false)
+ (libraries base unix base_quickcheck splittable_random tape)
+ (preprocess
+  (pps ppx_sexp_conv ppx_sexp_message)))

@@ -1,0 +1,9 @@
+; Jane Street's base_quickcheck v0.17, vendored UNMODIFIED apart from
+; this comment. Within this workspace `splittable_random` resolves to
+; our tape shim, which is the whole interception trick: every generator
+; draw becomes a typed tape choice with zero generator changes.
+(library
+ (name base_quickcheck)
+ (libraries base splittable_random)
+ (preprocess
+  (pps ppx_base ppx_fields_conv ppx_let ppx_sexp_message ppx_sexp_value)))

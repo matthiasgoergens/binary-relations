@@ -1,0 +1,6 @@
+(library
+ (name ppx_quickcheck_runtime)
+ (enabled_if
+  (<> %{profile} oxcaml))
+ (libraries base base_quickcheck)
+ (preprocess no_preprocessing))

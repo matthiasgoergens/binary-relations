@@ -1,0 +1,8 @@
+; The tape shim: the PATCHED upstream splittable_random (sr_real, with
+; the proposed Intercept seam) re-exported, plus a For_tape module that
+; implements tape recording as one Intercept record. Owning the
+; `splittable_random` name in this workspace makes the vendored
+; base_quickcheck compile against us.
+(library
+ (name splittable_random)
+ (libraries base tape sr_real))

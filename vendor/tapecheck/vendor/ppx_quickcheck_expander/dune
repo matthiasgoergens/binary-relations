@@ -1,0 +1,8 @@
+(library
+ (name ppx_quickcheck_expander)
+ (enabled_if
+  (<> %{profile} oxcaml))
+ (libraries base ppxlib ppxlib_jane compiler-libs.common)
+ (ppx_runtime_libraries ppx_quickcheck_runtime base_quickcheck)
+ (preprocess
+  (pps ppxlib.metaquot)))
