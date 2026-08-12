@@ -37,6 +37,21 @@
     integration would link [Index_format], which drags in the compiler libs)
     and compares the two implementations on all three questions.
 
+    {2 Which relation API this uses}
+
+    The relational side is written against [Relation.General] — the
+    comparator-carrying API — because that is what a real integration would
+    use: a merlin [Lid.t] is a handle into a lazily-unmarshalled graph, and
+    merlin's own [Lid.compare] reads three scalars from it rather than
+    comparing the structure. The stand-in [occurrence] gets the same
+    treatment here: a hand-written comparator over [file] and [line], two
+    scalars. The [Poly] façade would be fine for these stand-ins, but it is
+    precisely the one that cannot survive the real values — on merlin's real
+    13 MB index it runs out of memory, where the same build on the comparators
+    below takes 193 ms (see [NOTES.md]). If the demo is going to be a template
+    for the real thing, it should be a template for the API the real thing
+    needs.
+
     {2 The comparison that matters is how the code reads}
 
     At merlin's index sizes the performance question is mostly "does this stay
@@ -77,9 +92,33 @@ open! Core
 module Rel_ = Rel
 
 type uid = string
-type occurrence = { file : string; line : int }
+
+type occurrence = {
+  file : string;
+  line : int;
+}
+[@@deriving sexp_of]
 
 let occ file line = { file; line }
+
+(* The comparators a real integration would hand the library. [Occurrence]'s
+   plays the role of merlin's [Lid.compare]: two scalars, and the rest of the
+   value is deliberately not looked at. *)
+module Occurrence = struct
+  module T = struct
+    type t = occurrence
+
+    let compare a b =
+      match String.compare a.file b.file with
+      | 0 -> Int.compare a.line b.line
+      | n -> n
+
+    let sexp_of_t = sexp_of_occurrence
+  end
+
+  include T
+  include Comparator.Make (T)
+end
 
 (* ------------------------------------------------------------------ *)
 (* A synthetic index of the shape merlin builds                        *)
@@ -126,19 +165,21 @@ end
 module As_relation = struct
   open Rel_
 
-  type t = (uid, occurrence) Relation.t
+  type t =
+    (uid, String.comparator_witness, occurrence, Occurrence.comparator_witness) Relation.General.t
 
-  let of_pairs pairs : t = Relation.of_list pairs
+  let of_pairs pairs : t =
+    Relation.General.of_list (module String) (module Occurrence) pairs
 
-  let references (t : t) uid = Set.to_list (Relation.image t uid)
+  let references (t : t) uid = Set.to_list (Relation.General.image t uid)
 
   (* The converse is not a second structure to build and keep in step; it is
      the same value read the other way. *)
-  let definition_at (t : t) o = Set.to_list (Relation.preimage t o)
+  let definition_at (t : t) o = Set.to_list (Relation.General.preimage t o)
 
   (* The third access path is a derived relation, and it is derived once. *)
-  let by_file (t : t) = Relation.map_rng t ~f:(fun o -> o.file)
-  let uids_used_in by_file file = Set.to_list (Relation.preimage by_file file)
+  let by_file (t : t) = Relation.General.map_rng String.comparator t ~f:(fun o -> o.file)
+  let uids_used_in by_file file = Set.to_list (Relation.General.preimage by_file file)
 end
 
 (* ------------------------------------------------------------------ *)
@@ -149,11 +190,11 @@ let () =
   let r = As_relation.of_pairs pairs in
   printf "\nMerlin's index shape: %d (uid, occurrence) pairs, %d definitions\n\n"
     (List.length pairs)
-    (Set.length (Rel_.Relation.dom r));
+    (Set.length (Rel_.Relation.General.dom r));
 
-  let probe_uids = List.take (Set.to_list (Rel_.Relation.dom r)) 200 in
+  let probe_uids = List.take (Set.to_list (Rel_.Relation.General.dom r)) 200 in
   let probe_occs =
-    List.take (Set.to_list (Rel_.Relation.rng r)) 200
+    List.take (Set.to_list (Rel_.Relation.General.rng r)) 200
   in
   let files = List.take (List.dedup_and_sort ~compare:String.compare
                            (List.map pairs ~f:(fun (_, o) -> o.file))) 20
@@ -202,13 +243,13 @@ let () =
      there would report zero builds and prove nothing. *)
   let fresh = As_relation.of_pairs pairs in
   Rel_.Relation.reset_counters ();
-  ignore (Rel_.Relation.image fresh (List.hd_exn probe_uids) : occurrence Set.Poly.t);
+  ignore (Rel_.Relation.General.image fresh (List.hd_exn probe_uids));
   let after_forward = Rel_.Relation.index_builds () in
-  ignore (Rel_.Relation.preimage fresh (List.hd_exn probe_occs) : uid Set.Poly.t);
+  ignore (Rel_.Relation.General.preimage fresh (List.hd_exn probe_occs));
   let after_backward = Rel_.Relation.index_builds () in
-  let c = Rel_.Relation.converse fresh in
+  let c = Rel_.Relation.General.converse fresh in
   List.iter (List.take probe_occs 50) ~f:(fun o ->
-    ignore (Rel_.Relation.image c o : uid Set.Poly.t));
+    ignore (Rel_.Relation.General.image c o));
   printf
     "\n   index builds on a fresh value: %d after the forward question, %d after\n\
     \   the converse one, %d after 50 further lookups through [converse]\n"
