@@ -1327,6 +1327,22 @@ let test_eval_general () =
   let chain = of_list (module Int) (module Int) [ (1, 2); (2, 3) ] in
   check_eq_int "plus adds the transitive pairs" ~expect:3 (card (plus chain));
   check_eq_int "star is reflexive on the carrier only" ~expect:6 (card (star chain));
+  (* Scalar equality under the carried comparator, against the structural one. *)
+  let people = of_list (module Int) (module Coarse) [ (1, w "apple") ] in
+  let coarse_eq =
+    people
+    >> where_ Coarse.comparator
+         (let open V in
+          fun x -> eq_with Coarse.comparator x (lit (w "avocado")))
+  in
+  check_eq_int "eq_with follows the carried comparator" ~expect:1 (card coarse_eq);
+  let structural_eq =
+    people
+    >> where_ Coarse.comparator
+         (let open V in
+          fun x -> x =. lit (w "avocado"))
+  in
+  check_eq_int "=. stays structural" ~expect:0 (card structural_eq);
   (* "run the function backwards": materialise on a carrier, then converse. *)
   let succs = fn Int.comparator Int.comparator succ in
   check

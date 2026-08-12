@@ -36,6 +36,12 @@ Five layers, bottom to top:
 and `lib/laws.ml`, which is the algebra's equational laws as a functor any
 backend can run against itself.
 
+Every layer also exists at four type parameters — real comparator witnesses,
+Core's shape — as `Relation.General`, `Algebra.General`, `Eval.General`,
+`Symbolic.General`, `Rel_incr.General`, `Plan.General`, `Query.General` and
+`Laws.General`. That stack is the answer to the structural-comparison limit
+below; the two-parameter API is its `Poly` façade.
+
 A query is a functor over the signature, and interpreting it is applying it:
 
 ```ocaml
@@ -119,21 +125,30 @@ caller who builds, plans and runs once sees nothing. That distinction was never
 published before the audit, and it is the honest headline for a 500-pair
 relation.
 
-## A known limit, found on real data
+## The structural-comparison limit, and its answer
 
-`rel` orders elements by structural comparison (`Comparator.Poly`), which is
-what keeps a relation at exactly two type parameters. On merlin's real
-occurrence index — 78 950 uids, 201 866 pairs, read from disk — that **runs out
-of memory**: a merlin `Lid.t` is a handle into a lazily-unmarshalled graph
-reaching ~10 900 words, and merlin itself compares only three scalars from it
-with a hand-written comparator. See
+`rel`'s two-parameter API orders elements by structural comparison
+(`Comparator.Poly`), which is what keeps a relation at exactly two type
+parameters. On merlin's real occurrence index — 78 950 uids, 201 866 pairs,
+read from disk — that **runs out of memory**: a merlin `Lid.t` is a handle
+into a lazily-unmarshalled graph reaching ~10 900 words, and merlin itself
+compares only three scalars from it with a hand-written comparator.
+
+The answer is built and validated: **`Relation.General`** carries real
+comparator witnesses (Core's shape), and the whole stack exists at four
+parameters — algebra, all three interpreters, planner, surface, laws. On the
+same file, under an 8 GB memory cap: the Poly façade dies building the
+backward index; `General` with merlin's own comparators builds in **193 ms**,
+indexes in 316 ms, and answers the reverse lookup merlin's index cannot
+answer in 2 ms, agreeing with a fold over merlin's own structures. See
 [`NOTES.md`](./NOTES.md#ordering-is-structural--and-real-data-has-now-refuted-it)
-for the options; the likely resolution is `Core`'s, four parameters with a
-`Poly` alias, which means the premise bends rather than the implementation.
+for the full account, including what the port cost the signatures
+(`bot`/`id`/`where_`/`fn` take comparators; `fst_`/`snd_` take a descriptor).
 
-Today the library is sound for values whose structural order is meaningful and
-whose representation is small. That covers application state and loaded
-datasets; it excludes anything built on lazy links, interning or hash-consing.
+The two-parameter façade remains the default and is sound for values whose
+structural order is meaningful and whose representation is small — application
+state and loaded datasets. Anything built on lazy links, interning or
+hash-consing belongs in `Relation.General`.
 
 ## Building
 
@@ -146,7 +161,8 @@ bespoke test framework.
 opam switch create . ocaml-base-compiler.5.3.0 --no-install
 opam install --switch=. core incremental incr_map base_quickcheck ppx_jane
 dune build
-dune exec test/main.exe          # 136 checks, including 50 property-checked laws
+dune exec test/main.exe          # 224 checks, including the 50 property-checked laws run twice
+                                 # (two-parameter and four-parameter stacks)
 dune exec examples/org_chart.exe # closure, both directions, division, live updates
 dune exec examples/predicates.exe # spike 4: how big must the scalar language be?
 ```

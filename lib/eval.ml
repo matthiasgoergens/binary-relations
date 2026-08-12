@@ -55,6 +55,7 @@ module Impl = struct
     let str x = x
     let bool_ x = x
     let ( =. ) a b = Poly.equal a b
+    let eq_with (cmp : (_, _) Comparator.t) a b = cmp.compare a b = 0
     let ( <>. ) a b = not (Poly.equal a b)
     let ( <. ) a b = Poly.( < ) a b
     let ( <=. ) a b = Poly.( <= ) a b

@@ -185,6 +185,16 @@ module type SCALAR = sig
   val str : string -> string v
   val bool_ : bool -> bool v
   val ( =. ) : 'a v -> 'a v -> bool v
+  (** Structural equality ([Poly.equal]). The wrong tool for values whose
+      comparison must not walk the representation — graph handles, lazy
+      links; the merlin case. For those, use {!eq_with} with the carried
+      comparator, or project a scalar with {!field} and compare that. *)
+
+  val eq_with : ('a, 'w) Comparator.t -> 'a v -> 'a v -> bool v
+  (** Equality under a carried comparator. This is what [=.] cannot be: a
+      value-level equality that follows the same comparator the relations are
+      ordered by, so a predicate over coarse values does not walk their
+      structure. *)
   val ( <>. ) : 'a v -> 'a v -> bool v
   val ( <. ) : 'a v -> 'a v -> bool v
   val ( <=. ) : 'a v -> 'a v -> bool v

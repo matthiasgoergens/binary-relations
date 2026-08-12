@@ -61,6 +61,7 @@ module Scalar = struct
   let str x = { node = Lit (Printf.sprintf "%S" x); ev = (fun _ -> x) }
   let bool_ x = { node = Lit (Bool.to_string x); ev = (fun _ -> x) }
   let ( =. ) x y = bin "=" Poly.equal x y
+  let eq_with (cmp : (_, _) Comparator.t) x y = bin "≟" (fun a b -> cmp.compare a b = 0) x y
   let ( <>. ) x y = bin "<>" (fun a b -> not (Poly.equal a b)) x y
   let ( <. ) x y = bin "<" Poly.( < ) x y
   let ( <=. ) x y = bin "<=" Poly.( <= ) x y
