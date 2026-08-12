@@ -84,4 +84,46 @@ let () =
   Stdio.printf
     "\n   If this ratio is large, fork's cost is set by the component type, so\n\
     \   'Poly for products only' does not contain the problem: it re-exposes\n\
-    \   exactly the type the four-parameter change was made to protect.\n"
+    \   exactly the type the four-parameter change was made to protect.\n";
+
+  (* The same probe under [Relation.General], with a comparator that looks
+     only at the tag — the merlin [Lid.compare] discipline. [fork] derives its
+     pair comparator from this one, so the payload is never walked, and the
+     ratio the two-parameter runs just showed should collapse to ~1. The two
+     runs use the SAME comparator and differ only in payload size, which is
+     the point: cost is set by the comparator, not the representation. *)
+  let module G = Rel.Relation.General in
+  let module Heavy = struct
+    module T = struct
+      type t = {
+        tag : int;
+        payload : string list;
+      }
+
+      let compare a b = Int.compare a.tag b.tag
+      let sexp_of_t t = Sexp.Atom (Int.to_string t.tag)
+    end
+
+    include T
+    include Comparator.Make (T)
+  end in
+  let heavy i =
+    { Heavy.tag = i; payload = List.init 400 ~f:(fun k -> Printf.sprintf "w%d" k) }
+  in
+  let light i = { Heavy.tag = i; payload = [ Printf.sprintf "t%d" i ] } in
+  let run_general name mk =
+    let mkrel off =
+      G.of_list (module Int) (module Heavy)
+        (List.concat_map (List.init doms ~f:Fn.id) ~f:(fun d ->
+           List.init per_dom ~f:(fun j -> (d, mk (off + (d * per_dom) + j)))))
+    in
+    let a = mkrel 0 and b = mkrel 10_000 in
+    let _, out = time_ms (fun () -> G.fork a b) in
+    let mean, sd = measure (fun () -> ignore (G.fork a b)) in
+    Stdio.printf "   %-34s %9.3f ms  ± %.3f  (%d pairs out)\n" name mean sd (G.card out);
+    mean
+  in
+  Stdio.printf "\n   the same probe, fork over a carried tag-only comparator:\n\n";
+  let gcheap = run_general "General, payload = 1 word" light in
+  let gdear = run_general "General, payload = 400 words" heavy in
+  Stdio.printf "\n   ratio %.2fx\n" (gdear /. Float.max 1e-9 gcheap)

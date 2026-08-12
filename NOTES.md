@@ -189,6 +189,11 @@ Two consequences, both corrections to what this file said:
   mean ± sd over 10 runs) between a cheap and an expensive range at
   identical output cardinality. It would have re-exposed precisely the type the
   change exists to protect, in the one place the types claimed was covered.
+  The same bench now also carries the resolution: under `Relation.General`
+  with a tag-only comparator the ratio is **0.94×** — two runs differing only
+  in payload size cost the same, because `fork` derives its pair comparator
+  from the carried one and the payload is never walked. Cost is set by the
+  comparator, not the representation.
 - **The "layer 0 comes back" corollary falls with it.** It depended entirely on
   route 2 being necessary. "Layer 0 was not needed" and "structural comparison
   is acceptable" really were independent decisions after all.
