@@ -168,14 +168,23 @@ dune exec examples/predicates.exe # spike 4: how big must the scalar language be
 ```
 
 The laws run with `Base_quickcheck.Shrinker.atomic`, i.e. no shrinking. A
-branch, `tapecheck-shrinking`, swaps in
+vendored copy of
 [tapecheck](https://github.com/matthiasgoergens/tapecheck)'s choice-tape
-engine, which on the one law that genuinely failed during development reduces
-the counterexample from nine noisy pairs to `a=[] b=[] c=[(0,0)]` — the minimal
-one. It is a branch rather than the default because tapecheck is not yet
-installable and vendors its own `base_quickcheck`, which cannot share a dune
-scope with `Core`. See
-[`NOTES.md`](./NOTES.md#shrinking-what-tapecheck-buys-and-why-it-is-on-a-branch).
+engine lives in `vendor/tapecheck/` and runs the same 50 laws under real
+shrinking; on the one law that genuinely failed during development it reduces
+the counterexample from nine noisy pairs to `a=[] b=[] c=[(0,0)]` — the
+minimal one. It is vendored rather than a dependency because tapecheck is not
+yet installable (its vendored `splittable_random` fork is blocked on
+[janestreet/splittable_random#2](https://github.com/janestreet/splittable_random/pull/2)),
+and it is its own dune scope, built on demand rather than by the root build,
+because its vendored `base_quickcheck` cannot share a scope with `Core`:
+
+```
+dune exec vendor/tapecheck/laws/laws_main.exe
+```
+
+See
+[`NOTES.md`](./NOTES.md#shrinking-what-tapecheck-buys-and-why-it-is-vendored).
 
 ## Status
 

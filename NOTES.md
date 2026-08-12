@@ -386,7 +386,7 @@ bracket and a chain disagree. That case is unreachable, but a planner that
 silently emitted a different plan from the one it costed would still be
 correct — and would make every measurement in this file a lie.
 
-## Shrinking: what tapecheck buys, and why it is on a branch
+## Shrinking: what tapecheck buys, and why it is vendored
 
 The law suite runs `quickcheck_shrinker = Base_quickcheck.Shrinker.atomic`,
 which is no shrinking at all — `Shrinker.int`, `bool` and `char` are literally
@@ -395,8 +395,12 @@ generated. The cost showed up on the one law that genuinely failed here: the
 counterexample came back unshrunk and the diagnosis was done by hand.
 
 [tapecheck](https://github.com/matthiasgoergens/tapecheck) fixes that, and the
-integration is **on the `tapecheck-shrinking` branch, deliberately not on
-`main`**. Measured on this project's own generators:
+integration is **on `main`, vendored under `vendor/tapecheck/` as its own
+dune scope, built on demand** — `dune exec
+vendor/tapecheck/laws/laws_main.exe`. (It spent its first week as the
+`tapecheck-shrinking` branch; what changed is not the upstream situation but
+the observation that a vendored scope the root build never touches costs the
+default build nothing.) Measured on this project's own generators:
 
 | | `base_quickcheck` | tapecheck |
 |---|---|---|
@@ -413,25 +417,28 @@ never mentions.
 is a one-identifier change: same `(module S)`, same `~config`, same generators,
 and the declared `Shrinker.atomic` is accepted and ignored as advertised.
 
-**Why it is not on `main`.** tapecheck is not installable as an opam package —
-its libraries have no `public_name` and cannot until the `splittable_random`
-fork carrying `For_tape.attach` lands
-([janestreet/splittable_random#2](https://github.com/janestreet/splittable_random/pull/2)).
-So it has to be vendored, and it vendors its own `base_quickcheck` and
-`splittable_random` under those exact library names. Any dune target that also
-reaches the *installed* `base_quickcheck` then fails to resolve — and every
-user of `Core` reaches it, transitively through `base_bigstring` → `int_repr` →
-`base_quickcheck.ppx_quickcheck.runtime`. `(allow_overlapping_dependencies)`
-gets past dune's conflict check and the linker then rejects it outright, with
-duplicated `Base_quickcheck__Generator`, `Base_quickcheck__Test` and
-`Splittable_random`.
+**Why vendored, and why a separate scope.** tapecheck is not installable as
+an opam package — its libraries have no `public_name` and cannot until the
+`splittable_random` fork carrying `For_tape.attach` lands
+([janestreet/splittable_random#2](https://github.com/janestreet/splittable_random/pull/2),
+still open as of 2026-08-10). So it has to be vendored, and it vendors its
+own `base_quickcheck` and `splittable_random` under those exact library
+names. Any dune target that also reaches the *installed* `base_quickcheck`
+then fails to resolve — and every user of `Core` reaches it, transitively
+through `base_bigstring` → `int_repr` → `base_quickcheck.ppx_quickcheck.runtime`.
+`(allow_overlapping_dependencies)` gets past dune's conflict check and the
+linker then rejects it outright, with duplicated `Base_quickcheck__Generator`,
+`Base_quickcheck__Test` and `Splittable_random`.
 
 That is a hard adoption blocker against exactly the audience tapecheck is for,
 and it is worth recording that it was confirmed from outside the project rather
-than inferred from its own tree. Carrying 512K of vendored Jane Street code in
-a repo that otherwise builds from `base` and `sexplib0` is not a trade worth
-making until the upstream fork lands; the branch keeps the work and the
-evidence alive until then.
+than inferred from its own tree. The vendored tree carries 512K of Jane Street
+code in a repo that otherwise builds from `base` and `sexplib0`; what makes
+that acceptable is that its own `dune-project` puts it in a separate scope, so
+the root build and the default test suite never touch it, and the laws suite
+inside it reaches `rel` only because `rel` is a public, Core-free library. If
+the upstream fork lands and tapecheck becomes installable, the vendor copy
+should be deleted and `laws_main` moved to `test/`.
 
 **What the attempt left behind on `main`, on its own merits.** Making `rel`
 Core-free was a precondition for the experiment and is an improvement
@@ -443,7 +450,8 @@ is worth knowing: `ppx_jane` bundles `ppx_quickcheck`, whose *runtime* is
 `base_quickcheck` in its link closure. Narrowing to `ppx_sexp_conv` removed a
 dependency that had nothing to do with the code.
 
-Two smaller findings, both fixable upstream and both recorded on the branch:
+Two smaller findings, both fixable upstream and both visible in the vendored
+suite's output:
 `Tape_test.run`'s `?report` defaults to `` `Summary ``, which prints to stdout
 on every call (47 lines for this suite) and whose `` `Silent `` alternative is
 not in the README's usage section; and the summary line disagrees with the
