@@ -1215,11 +1215,13 @@ let test_no_gratuitous_refusal () =
    representation is large or shared -- merlin's Lid.t reaches ~10 900 words
    and building an index over 200 000 of them exhausts memory.
 
-   Pinned rather than fixed. The check builds a relation over elements that
+   Recorded rather than fixed. The check builds a relation over elements that
    share a large prefix, so every comparison walks it, and records the cost
-   against the same shape with a cheap key. When comparators land, this ratio
-   should collapse and the assertion below will fail, which is the reminder to
-   update it. *)
+   against the same shape with a cheap key. The ratio is printed for the
+   reader but no longer asserted: timing ratios are too noisy to gate on
+   (71.9x / 88x / 114.9x across runs of the fork bench), and the invariant it
+   stood for is asserted deterministically instead by the forced-payload test
+   in [test_general_comparators] below. *)
 let test_structural_comparison_cost () =
   section "Extracted: what structural comparison costs on shared-heavy values";
   let n = 3000 in
@@ -1242,10 +1244,8 @@ let test_structural_comparison_cost () =
   printf "   %d pairs, plain int key                              : %6.1f ms\n" n t_light;
   printf "   ratio                                                 %6.1fx\n"
     (t_heavy /. Float.max 0.001 t_light);
-  check "structural comparison is still the known bottleneck on shared keys"
-    (Float.( > ) (t_heavy /. Float.max 0.001 t_light) 3.0);
-  printf "   => pinned. When comparators land this ratio collapses and this\n";
-  printf "      assertion fails, which is the reminder to retire it.\n"
+  printf "   => informative only; the deterministic guard is the forced-payload\n";
+  printf "      test in the Relation.General section.\n"
 
 (* ------------------------------------------------------------------ *)
 (* Relation.General: the four-parameter interface                      *)
@@ -1297,7 +1297,36 @@ let test_general_comparators () =
   let e = G.empty Int.comparator Coarse.comparator in
   check_eq_int "General empty is a function of the comparators" ~expect:0 (G.card e);
   let u = G.union r (G.of_list (module Int) (module Coarse) [ (5, w "durian") ]) in
-  check_eq_int "General union with matching witnesses" ~expect:5 (G.card u)
+  check_eq_int "General union with matching witnesses" ~expect:5 (G.card u);
+  (* The deterministic counterpart of the timed structural-comparison section
+     above: the 114.9x fork_cost ratio exists only because the Poly comparator
+     walks payloads. Here the payload is a lazy whose forcing is counted, and
+     a tag-only comparator is in force, so fork and compose must never force
+     it. Asserting the invariant directly replaces gating on a noisy timing
+     ratio. *)
+  let payload_forces = ref 0 in
+  let module Tagged = struct
+    module T = struct
+      type t = { tag : int; payload : unit Lazy.t }
+
+      let compare a b = Int.compare a.tag b.tag
+      let sexp_of_t t = Sexp.Atom (sprintf "<%d>" t.tag)
+    end
+
+    include T
+    include Comparator.Make (T)
+  end in
+  let mk i = { Tagged.tag = i mod 5; payload = lazy (Int.incr payload_forces) } in
+  let a =
+    G.of_list (module Tagged) (module Tagged) (List.init 20 ~f:(fun i -> (mk i, mk (i + 3))))
+  in
+  let b =
+    G.of_list (module Tagged) (module Tagged) (List.init 20 ~f:(fun i -> (mk (i + 1), mk (i + 7))))
+  in
+  ignore (G.fork a b : _ G.t);
+  ignore (G.compose a b : _ G.t);
+  check_eq_int "fork and compose with a tag-only comparator never force a payload"
+    ~expect:0 !payload_forces
 
 (* ------------------------------------------------------------------ *)
 (* Eval.General: the four-parameter algebra, end to end                *)
