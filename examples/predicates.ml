@@ -13,10 +13,15 @@
     {!Rel.Symbolic} to print it and to ask whether the planner can see through
     it. The verdict at the bottom is counted, not estimated.
 
+    Written against the four-parameter ladder, like the other examples: the
+    only place it shows is that [where_] takes the filtered type's comparator,
+    which is what a real consumer would carry anyway.
+
     Run with [dune exec examples/predicates.exe]. *)
 
 open! Core
 open Rel
+module G = Relation.General
 
 type order = {
   id : int;
@@ -45,14 +50,30 @@ let orders =
       discount = 60; due_day = 80; shipped_day = 130; email = "n.abel@abel.example" };
   ]
 
+(* The comparator the example carries, the way a real consumer would. [id] is
+   unique per order, so it stands in for the whole row — exactly the shape of
+   merlin's [Lid.compare], and the opposite of the structural comparison the
+   Poly façade would apply. *)
+module Order_cmp = struct
+  module T = struct
+    type t = order
+
+    let compare a b = Int.compare a.id b.id
+    let sexp_of_t o = Sexp.List [ Int.sexp_of_t o.id; String.sexp_of_t o.customer ]
+  end
+
+  include T
+  include Comparator.Make (T)
+end
+
 (* The relation under test: order id to the order. Nothing below depends on
    that shape — a coreflexive filters whatever it is composed with. *)
-let rel = Relation.of_list (List.map orders ~f:(fun o -> (o.id, o)))
+let rel = G.of_list (module Int) (module Order_cmp) (List.map orders ~f:(fun o -> (o.id, o)))
 
 (* A predicate is a functor so that one of them can be handed to two
    interpreters. That is the whole point of the tagless-final presentation:
    the predicate is written once and means two different things. *)
-module type PRED = functor (R : Algebra.RELATIONS) -> sig
+module type PRED = functor (R : Algebra.General.RELATIONS) -> sig
   val p : order R.V.v -> bool R.V.v
 end
 
@@ -60,19 +81,19 @@ end
 (* Expressible in the scalar language                                  *)
 (* ------------------------------------------------------------------ *)
 
-module Status_open (R : Algebra.RELATIONS) = struct
+module Status_open (R : Algebra.General.RELATIONS) = struct
   open R.V
 
   let p o = field ~name:"status" (fun o -> o.status) o =. str "open"
 end
 
-module Big_quantity (R : Algebra.RELATIONS) = struct
+module Big_quantity (R : Algebra.General.RELATIONS) = struct
   open R.V
 
   let p o = field ~name:"qty" (fun o -> o.qty) o >. int_ 10
 end
 
-module Line_total (R : Algebra.RELATIONS) = struct
+module Line_total (R : Algebra.General.RELATIONS) = struct
   open R.V
 
   let p o =
@@ -80,13 +101,13 @@ module Line_total (R : Algebra.RELATIONS) = struct
     >. int_ 10000
 end
 
-module Not_singapore (R : Algebra.RELATIONS) = struct
+module Not_singapore (R : Algebra.General.RELATIONS) = struct
   open R.V
 
   let p o = field ~name:"country" (fun o -> o.country) o <>. str "SG"
 end
 
-module Shipped_late (R : Algebra.RELATIONS) = struct
+module Shipped_late (R : Algebra.General.RELATIONS) = struct
   open R.V
 
   let p o =
@@ -94,7 +115,7 @@ module Shipped_late (R : Algebra.RELATIONS) = struct
     >. field ~name:"due_day" (fun o -> o.due_day) o
 end
 
-module Open_and_discounted (R : Algebra.RELATIONS) = struct
+module Open_and_discounted (R : Algebra.General.RELATIONS) = struct
   open R.V
 
   let p o =
@@ -103,7 +124,7 @@ module Open_and_discounted (R : Algebra.RELATIONS) = struct
     &&. (field ~name:"discount" (fun o -> o.discount) o >=. int_ 50)
 end
 
-module Large_or_held (R : Algebra.RELATIONS) = struct
+module Large_or_held (R : Algebra.General.RELATIONS) = struct
   open R.V
 
   let p o =
@@ -112,19 +133,19 @@ module Large_or_held (R : Algebra.RELATIONS) = struct
     ||. (field ~name:"status" (fun o -> o.status) o =. str "hold")
 end
 
-module Name_starts_with_a (R : Algebra.RELATIONS) = struct
+module Name_starts_with_a (R : Algebra.General.RELATIONS) = struct
   open R.V
 
   let p o = is_prefix (field ~name:"customer" (fun o -> o.customer) o) ~prefix:(str "A")
 end
 
-module Undiscounted (R : Algebra.RELATIONS) = struct
+module Undiscounted (R : Algebra.General.RELATIONS) = struct
   open R.V
 
   let p o = not_ (field ~name:"discount" (fun o -> o.discount) o >. int_ 0)
 end
 
-module Due_in_window (R : Algebra.RELATIONS) = struct
+module Due_in_window (R : Algebra.General.RELATIONS) = struct
   open R.V
 
   let p o =
@@ -136,7 +157,7 @@ end
 (* Not expressible: the escape hatch, and why in each case             *)
 (* ------------------------------------------------------------------ *)
 
-module Example_domain (R : Algebra.RELATIONS) = struct
+module Example_domain (R : Algebra.General.RELATIONS) = struct
   open R.V
 
   (* [is_prefix] is the only string operation in [v]; a suffix or substring
@@ -147,7 +168,7 @@ module Example_domain (R : Algebra.RELATIONS) = struct
       (field ~name:"email" (fun o -> o.email) o)
 end
 
-module Round_dollars (R : Algebra.RELATIONS) = struct
+module Round_dollars (R : Algebra.General.RELATIONS) = struct
   open R.V
 
   (* Integer division and modulo are not in [v]. They could be; this is the
@@ -158,7 +179,7 @@ module Round_dollars (R : Algebra.RELATIONS) = struct
       (field ~name:"unit_price" (fun o -> o.unit_price) o)
 end
 
-module Taxed_price (R : Algebra.RELATIONS) = struct
+module Taxed_price (R : Algebra.General.RELATIONS) = struct
   open R.V
 
   (* Floating point is not in [v] at all. Fixed-point integer arithmetic would
@@ -170,7 +191,7 @@ module Taxed_price (R : Algebra.RELATIONS) = struct
       o
 end
 
-module Name_pattern (R : Algebra.RELATIONS) = struct
+module Name_pattern (R : Algebra.General.RELATIONS) = struct
   open R.V
 
   (* Regular expressions are not going into a scalar language whose point is
@@ -219,18 +240,21 @@ let () =
   printf "%s\n" (String.make 108 '-');
   List.iter cases ~f:(fun { description; expected; pred } ->
     let module P = (val pred : PRED) in
-    let module Pe = P (Eval) in
-    let module Ps = P (Symbolic) in
-    let selected = List.map (Eval.to_list Eval.(of_relation rel >> where_ Pe.p)) ~f:fst in
+    let module Pe = P (Eval.General) in
+    let module Ps = P (Symbolic.General) in
+    let selected =
+      List.map (Eval.General.to_list Eval.General.(of_relation rel >> where_ Order_cmp.comparator Pe.p))
+        ~f:fst
+    in
     if not (List.equal Int.equal selected expected) then (
       incr wrong;
       printf "  MISMATCH on %s: selected %s, expected %s\n" description
         (List.to_string selected ~f:Int.to_string)
         (List.to_string expected ~f:Int.to_string));
-    let q = Symbolic.(of_relation rel >> where_ Ps.p) in
-    let opaque = Symbolic.has_opaque q in
+    let q = Symbolic.General.(of_relation rel >> where_ Order_cmp.comparator Ps.p) in
+    let opaque = Symbolic.General.has_opaque q in
     if opaque then incr blind;
-    let printed = Symbolic.to_string q in
+    let printed = Symbolic.General.to_string q in
     let printed =
       match String.substr_index printed ~pattern:"where(" with
       | Some i -> String.sub printed ~pos:i ~len:(String.length printed - i - 1)
