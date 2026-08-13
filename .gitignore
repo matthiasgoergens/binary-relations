@@ -1,5 +1,6 @@
 _build/
 _opam/
 switch-build*.log
+runtest-*.log
 /four-param/
 /notes/
