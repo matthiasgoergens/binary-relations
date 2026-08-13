@@ -1,5 +1,5 @@
 _build/
 _opam/
-switch-build.log
+switch-build*.log
 /four-param/
 /notes/
