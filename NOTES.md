@@ -125,7 +125,7 @@ rather than the implementation.
 
 ### Spiked it. Feasible for the binary case, blocked at products.
 
-`~/prog/binary-relations-notes/core-spike/` carries witnesses in the type,
+`~/prog/binary-relations-all/notes/core-spike/` carries witnesses in the type,
 `('a, 'acmp, 'b, 'bcmp) t`, and works: composition type-checks only when the
 middle comparators agree (which is the soundness the witness buys), converse
 stays free because the two indexes simply swap, and a **domain-specific
@@ -174,7 +174,7 @@ The witness is *a function of the two element witnesses* — exactly what was
 recorded as inexpressible. Applying the functor once to the pair type gives a
 stable witness constructor, so two derived pair comparators over the same
 element types do unify. Verified in
-`~/prog/binary-relations-notes/product-witness-spike/`: a `Set` of 2 000
+`~/prog/binary-relations-all/notes/product-witness-spike/`: a `Set` of 2 000
 product-keyed elements, built with a comparator that never walks the payload.
 
 So `fork` computes its result witness from its inputs rather than taking one:
@@ -943,7 +943,7 @@ development of exactly these theories
 ~2.4 MB PDF, 44k lines of extracted text) and it is a later and more complete
 statement than either 2006 paper. Everything below is quoted from it. A local
 copy, with the exact quoted lines and a note on how it was tracked down, is in
-`~/prog/binary-relations-notes/rath-agda/` — kept out of this repo because the
+`~/prog/binary-relations-all/notes/rath-agda/` — kept out of this repo because the
 documents are third-party.
 
 **The finite-carrier residual is a known construct called a *restricted
@@ -1034,7 +1034,7 @@ downstream moved.
 | 6 | semi-naive evaluation | **done** — 16.0× fewer tuples touched than the naive fixpoint on a 30-link chain |
 | 7 | `Incremental` as a second interpreter | **done** — 501× on a one-tuple insert; the deletion boundary is real and documented |
 | 8 | lazy automatic index selection | **done** — and it collapsed into index *building*, see above |
-| 1 | OxCaml modes for relational contraction | **done, negative, as expected.** Reachable once `rel` became Base-only. `once`/`unique` do not constrain a data-shaped term used twice; `once` does forbid a second use of a *closure*-shaped one — but the `copy` that contraction needs cannot then be written, because writing it requires exactly the second use being forbidden. The modality is affine and contraction is the rule affineness deletes; the way back in linear logic is `!`, whose OxCaml counterpart (`many`) restores unrestricted duplication rather than mediated duplication. Full write-up and probes in `~/prog/binary-relations-notes/spike1-oxcaml/` |
+| 1 | OxCaml modes for relational contraction | **done, negative, as expected.** Reachable once `rel` became Base-only. `once`/`unique` do not constrain a data-shaped term used twice; `once` does forbid a second use of a *closure*-shaped one — but the `copy` that contraction needs cannot then be written, because writing it requires exactly the second use being forbidden. The modality is affine and contraction is the rule affineness deletes; the way back in linear logic is `!`, whose OxCaml counterpart (`many`) restores unrestricted duplication rather than mediated duplication. Full write-up and probes in `~/prog/binary-relations-all/notes/spike1-oxcaml/` |
 
 ## Open questions, updated
 
