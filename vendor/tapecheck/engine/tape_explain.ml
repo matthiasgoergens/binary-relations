@@ -229,7 +229,7 @@ let trail_alternatives ~(trail : Tape.image list) (image : Tape.image) seg idx :
             let a = Tape_engine.seg_get image s
             and b = Tape_engine.seg_get cand s in
             Array.length a = Array.length b
-            && Array.for_alli a ~f:(fun i x -> Tape.compare_choice x b.(i) = 0)
+            && Array.for_alli a ~f:(fun i x -> Tape.Domain.equal x b.(i))
           end)
       in
       if not other_segments_match then None
@@ -239,15 +239,15 @@ let trail_alternatives ~(trail : Tape.image list) (image : Tape.image) seg idx :
         else begin
           let same_except_idx =
             Array.for_alli a ~f:(fun i x ->
-              i = idx || Tape.compare_choice x b.(i) = 0)
+              i = idx || Tape.Domain.equal x b.(i))
           in
-          if same_except_idx && Tape.compare_choice a.(idx) b.(idx) <> 0 then
+          if same_except_idx && not (Tape.Domain.equal a.(idx) b.(idx)) then
             Some b.(idx)
           else None
         end
       end
     end)
-  |> List.dedup_and_sort ~compare:Tape.compare_choice
+  |> List.dedup_and_sort ~compare:Tape.Domain.compare_structural
 
 (* One perturbation: replace the choice at [(seg, idx)] with [candidate]
    and nothing else, replay, and classify the result. [`Untestable]
@@ -343,7 +343,7 @@ let run_item (type a) ~(gen : a Base_quickcheck.Generator.t) ~size
          if
            not
              (List.mem it.found_choices candidate
-                ~equal:(fun a b -> Tape.compare_choice a b = 0))
+                ~equal:Tape.Domain.equal)
          then begin
            it.found <- it.found @ [ v ];
            it.found_choices <- candidate :: it.found_choices
@@ -372,7 +372,7 @@ let analyze (type a) ~(gen : a Base_quickcheck.Generator.t) ~size
              tried once. *)
           trail_alternatives ~trail image seg idx
           @ candidates_for choice
-          |> List.dedup_and_sort ~compare:Tape.compare_choice
+          |> List.dedup_and_sort ~compare:Tape.Domain.compare_structural
           |> Array.of_list
         in
         let n_candidates = Array.length candidates in

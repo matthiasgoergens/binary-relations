@@ -42,6 +42,11 @@ module For_tape = struct
     ; bool =
         (fun st ~default ->
           Tape.draw_bool tape ~stream:key ~sample:(fun () -> default st))
+    ; bool_with_probability =
+        (fun st ~probability ~default ->
+          Tape.draw_bool tape ~stream:key ~sample:(fun () -> default st ~probability))
+    ; on_span_start = (fun _label -> ())
+    ; on_span_stop = (fun () -> ())
     ; on_split =
         (fun () -> Some (hooks tape (Tape.on_split tape ~stream:key)))
     ; on_perturb =

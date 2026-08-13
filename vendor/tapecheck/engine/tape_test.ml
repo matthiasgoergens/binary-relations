@@ -1,11 +1,14 @@
-(* Drop-in replacement for Base_quickcheck.Test: same Config, same
-   (module S) argument, same run/run_exn/result signatures. The
-   module's quickcheck_shrinker is accepted and ignored; shrinking is
-   the tape engine's replay-based search over quickcheck_generator.
-   Existing suites switch by replacing the module name. *)
+(* Source-compatible replacement for ordinary Base_quickcheck.Test calls:
+   same Config and (module S) shape, and the same five callable entry points.
+   It is not a semantic implementation of the Base Test module type:
+   [with_sample] retains Base's stock sequence rather than previewing this
+   module's taped, edge-biased [run] sequence, and [quickcheck_shrinker] is
+   accepted but ignored. Shrinking is the tape engine's replay-based search
+   over [quickcheck_generator]. *)
 
 open! Base
 module Config = Base_quickcheck.Test.Config
+module type S = Base_quickcheck.Test.S
 
 (* Raised when a failure was observed but its minimal example no longer
    reproduces. Distinct from an ordinary test failure: the run is
@@ -14,6 +17,14 @@ module Config = Base_quickcheck.Test.Config
 exception Flaky_test of string
 
 let default_config = Base_quickcheck.Test.default_config
+
+(* Sampling does not shrink.  These two functions deliberately retain
+   base_quickcheck's stock sample sequence and precise lazy semantics; they are
+   source-compatible utilities, not a preview of [Tape_test.run]'s taped,
+   edge-biased generation schedule.  In particular, generators of functions
+   may be observed in the callback rather than while the value is generated. *)
+let with_sample = Base_quickcheck.Test.with_sample
+let with_sample_exn = Base_quickcheck.Test.with_sample_exn
 
 (* RO6 (outreach/ro-roadmap.md): re-exported here, alongside [run]/
    [run_exn]/[result], because this is the module a suite actually
@@ -315,6 +326,12 @@ let result (type a e) ~(f : a -> (unit, e) Result.t)
      not just its first generated case. *)
   let stats = match stats with Some s -> s | None -> Tape_engine.no_stats () in
   let health = Tape_health.create () in
+  (match (db, db_key) with
+   | Some _, None ->
+     Error.raise_s
+       [%message "?db requires ?db_key (use a stable, property-specific key)"]
+   | None, Some _ -> Error.raise_s [%message "?db_key requires ?db"]
+   | Some _, Some _ | None, None -> ());
   let print_report () =
     match report with
     | `Silent -> ()
@@ -391,7 +408,12 @@ let result (type a e) ~(f : a -> (unit, e) Result.t)
             ~lines:(stale : int list)]
   in
   match regression_failure with
-  | Some err -> err
+  | Some err ->
+    (* Route through the same report path as a fresh-generation failure:
+       without this a regression-entry failure was the one result that
+       printed no summary line at all (tapecheck#11). *)
+    print_report ();
+    err
   | None ->
     finish_run
       @@
@@ -410,7 +432,9 @@ let result (type a e) ~(f : a -> (unit, e) Result.t)
         None)
   in
   match example_failure with
-  | Some err -> err
+  | Some err ->
+    print_report ();
+    err
   | None ->
     let base_seed = seed_int config.seed in
     let sizes =
@@ -436,7 +460,8 @@ let result (type a e) ~(f : a -> (unit, e) Result.t)
     let db_entry =
       match (db, db_key) with
       | Some d, Some k -> Some (d, k)
-      | Some _, None | None, Some _ | None, None -> None
+      | None, None -> None
+      | Some _, None | None, Some _ -> assert false
     in
     (match db_entry with
      | None -> ()
@@ -453,7 +478,8 @@ let result (type a e) ~(f : a -> (unit, e) Result.t)
          let replay_size =
            match saved_size with
            | Some n when n >= 0 -> n
-           | _ -> sizes.(0)
+           | _ when Array.length sizes > 0 -> sizes.(0)
+           | _ -> 30
          in
          match
            Tape_engine.resume M.quickcheck_generator ~test ~realign

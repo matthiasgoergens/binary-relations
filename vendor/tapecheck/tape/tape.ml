@@ -75,8 +75,7 @@ type policy =
    of appending duplicates. [input]/[rpos] is the replay side; [known]
    distinguishes a stream present in the replay image (exhausting it is
    an overrun) from a brand-new stream (all draws fresh, no flags: new
-   salts appear whenever an edit changes an argument's hash, and
-   whole-stream deletion relies on absent streams sampling fresh). *)
+   salts appear whenever an edit changes an argument's hash). *)
 type stream = {
   mutable written : choice array;
   mutable wlen : int;
@@ -732,6 +731,119 @@ let compare_choice a b =
   | Bool _, _ -> -1
   | _, Bool _ -> 1
 
+(* The shrink order, and the target it descends toward, in ONE place.
+
+   These used to be two definitions in two files: [compare_choice] here
+   said what "smaller" means, while [choice_at_target] and
+   [trivial_choice] in tape_engine.ml independently said what the
+   minimum IS. Nothing tied them together, so they could disagree
+   silently -- and a shrinker whose notion of "smaller" and notion of
+   "smallest" disagree walks past its own answer.
+
+   [Domain] is the single statement of both, and test_domain_laws/
+   property-tests the relationship rather than trusting it:
+
+     target is a lower bound       compare (target c) c <= 0
+     at_target agrees with compare at_target c  <->  compare c (target c) = 0
+     target is idempotent          target (target c) = target c
+
+   Note what is deliberately NOT claimed: this is a total PREORDER, not
+   a total order. Two distinct floats equidistant from the target
+   compare equal, because [float_key] is a distance. That is fine for
+   the shrinker -- acceptance requires a STRICT decrease, so equal
+   proposals are rejected and the descent still terminates -- but
+   "compare = 0" must not be read as "structurally equal". *)
+module Domain = struct
+  let target = function
+    | Integer { lo; hi; _ } ->
+      Integer { value = clamp_int64 0L ~lo ~hi; lo; hi }
+    | Float { lo; hi; _ } -> Float { value = clamp_float 0. ~lo ~hi; lo; hi }
+    | Bool _ -> Bool false
+    | Marker -> Marker
+
+  let at_target = function
+    | Integer { value; lo; hi } -> Int64.equal value (clamp_int64 0L ~lo ~hi)
+    | Float { value; lo; hi } ->
+      let t = clamp_float 0. ~lo ~hi in
+      (* Not [Float.equal]: a NaN value is never at target, and
+         [nan = nan] is already false, so plain [=] is what is wanted
+         here. Spelled out because the opposite is the usual bug. *)
+      value = t
+    | Bool b -> not b
+    | Marker -> true
+
+  let compare = compare_choice
+
+  (* Structural identity, which [compare] is NOT a test for.
+
+     Needed because two consumers ask "is this the same recording?" and
+     the order cannot answer: [check_generator_determinism] compares
+     successive replays, and [Tape_explain] deduplicates alternatives.
+     Both used [compare ... = 0], and both could therefore treat
+     genuinely different recordings as identical -- 0.0 drawn from
+     [0,1] and 5.0 drawn from [5,6] are both at their targets, so their
+     distance keys are both zero.
+
+     Floats compare by BIT PATTERN rather than by [=], so that a
+     recorded NaN equals itself. Identity here means "the same bytes on
+     the tape", and a replay that reproduces a NaN has reproduced the
+     recording; [nan = nan] being false is the right answer for
+     arithmetic and the wrong one for this question. *)
+  let equal a b =
+    match (a, b) with
+    | Integer a, Integer b ->
+      Int64.equal a.value b.value && Int64.equal a.lo b.lo
+      && Int64.equal a.hi b.hi
+    | Float a, Float b ->
+      let bits = Int64.bits_of_float in
+      Int64.equal (bits a.value) (bits b.value)
+      && Int64.equal (bits a.lo) (bits b.lo)
+      && Int64.equal (bits a.hi) (bits b.hi)
+    | Bool a, Bool b -> a = b
+    | Marker, Marker -> true
+    | _ -> false
+
+  (* A total order on the STRUCTURE, for callers that need to sort or
+     deduplicate recordings rather than rank them by how small they are.
+     Floats order by bit pattern, so this is consistent with [equal] and
+     NaN has a definite place. Not the shrink order and not a substitute
+     for it. *)
+  let kind_rank = function
+    | Integer _ -> 0
+    | Float _ -> 1
+    | Bool _ -> 2
+    | Marker -> 3
+
+  let compare_structural a b =
+    match (a, b) with
+    | Integer a, Integer b ->
+      let c = Int64.compare a.value b.value in
+      if c <> 0 then c
+      else
+        let c = Int64.compare a.lo b.lo in
+        if c <> 0 then c else Int64.compare a.hi b.hi
+    | Float a, Float b ->
+      let bits = Int64.bits_of_float in
+      let c = Int64.compare (bits a.value) (bits b.value) in
+      if c <> 0 then c
+      else
+        let c = Int64.compare (bits a.lo) (bits b.lo) in
+        if c <> 0 then c else Int64.compare (bits a.hi) (bits b.hi)
+    (* [Stdlib.compare]: inside this module [compare] is the SHRINK
+       order, which takes choices, not bools or ints. *)
+    | Bool a, Bool b -> Stdlib.compare a b
+    | Marker, Marker -> 0
+    | a, b -> Stdlib.compare (kind_rank a) (kind_rank b)
+end
+
+let equal_choices (a : choice array) (b : choice array) =
+  Array.length a = Array.length b
+  &&
+  let rec go i =
+    i >= Array.length a || (Domain.equal a.(i) b.(i) && go (i + 1))
+  in
+  go 0
+
 let compare_shortlex (a : choice array) (b : choice array) =
   let la = Array.length a and lb = Array.length b in
   if la <> lb then compare la lb
@@ -748,7 +860,14 @@ let compare_shortlex (a : choice array) (b : choice array) =
 (* Image order: total choice count first (a deleted stream is a smaller
    tape), then the main stream shortlex, then fewer streams, then the
    sorted stream lists pairwise (key order, then per-stream shortlex).
-   A total order, so shrink acceptance stays a strict descent. *)
+   A total PREORDER, not a total order, and the difference is worth
+   being exact about: [compare_choice] on floats compares a DISTANCE
+   from the target, so -1.0 and 1.0 about a target of 0.0 compare equal
+   while being different tapes. Shrink acceptance is still a strict
+   descent, because it requires [< 0] and therefore rejects the equal
+   case -- the preorder is enough for termination, which is all the
+   engine needs. What it does not license is reading [compare_image = 0]
+   as "the same tape". Pinned in test_domain_laws/. *)
 let image_size (img : image) =
   Array.fold_left
     (fun acc (_, arr) -> acc + Array.length arr)
@@ -780,3 +899,17 @@ let compare_image (a : image) (b : image) =
       end
     end
   end
+
+(* Structural identity of whole images: "is this the same recording?",
+   which [compare_image = 0] does not answer (see [Domain.equal]). *)
+let equal_image (a : image) (b : image) =
+  equal_choices a.main b.main
+  && Array.length a.streams = Array.length b.streams
+  &&
+  let rec go i =
+    i >= Array.length a.streams
+    ||
+    let ka, arr_a = a.streams.(i) and kb, arr_b = b.streams.(i) in
+    compare_key ka kb = 0 && equal_choices arr_a arr_b && go (i + 1)
+  in
+  go 0

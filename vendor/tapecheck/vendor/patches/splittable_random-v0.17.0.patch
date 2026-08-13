@@ -1,0 +1,549 @@
+--- a/src/splittable_random.ml
++++ b/src/splittable_random.ml
+@@ -21,22 +21,64 @@
+ *)
+ 
+ open! Base
++(* Compat shim (see vendor/sr_real/dune comment): Base v0.18 preview
++   drops the bitwise operators from Int64.O and changes popcount. *)
++let int64_popcount (x : int64) : int =
++  let n = ref 0 in
++  let v = ref x in
++  for _ = 0 to 63 do
++    if Int64.( <> ) (Int64.bit_and !v 1L) 0L then Int.incr n;
++    v := Int64.shift_right_logical !v 1
++  done;
++  !n
++
+ open Int64.O
+ 
++let ( lxor ) = Int64.bit_xor
++let ( lor ) = Int64.bit_or
++let ( land ) = Int64.bit_and
++let _ = ( land ) (* used only on some Base versions *)
++let ( lsr ) x n = Int64.shift_right_logical x n
++
+ let is_odd x = x lor 1L = x
+-let popcount = Int64.popcount
++let popcount = int64_popcount
+ 
+ type t =
+   { mutable seed : int64
+   ; odd_gamma : int64
++  ; mutable intercept : intercept option
++  }
++
++(* Interception hooks for property-testing engines (see the [Intercept]
++   module below). [None] is the default and costs one branch per draw.
++
++   Seam v2 (design/stream-keyed-tapes.md): [on_split] returns the
++   hooks for the freshly split state ([None] keeps it hook-free), and
++   [on_perturb] receives the salt and may return replacement hooks for
++   this state ([None] keeps the current hooks). This is what lets an
++   engine give split-off streams their own identity, so generated
++   functions shrink; the submitted upstream PR carries the v1
++   unit-returning signatures. *)
++and intercept =
++  { int64 :
++      t -> lo:int64 -> hi:int64 -> default:(t -> lo:int64 -> hi:int64 -> int64) -> int64
++  ; float :
++      t -> lo:float -> hi:float -> default:(t -> lo:float -> hi:float -> float) -> float
++  ; unit_float : t -> default:(t -> float) -> float
++  ; bool : t -> default:(t -> bool) -> bool
++  ; on_split : unit -> intercept option
++  ; on_perturb : int -> intercept option
+   }
+ 
+ (* Alias used below when [t] is shadowed. *)
+ type state = t
+ 
+ let golden_gamma = 0x9e37_79b9_7f4a_7c15L
+-let of_int seed = { seed = Int64.of_int seed; odd_gamma = golden_gamma }
+-let copy { seed; odd_gamma } = { seed; odd_gamma }
++let of_int seed =
++  { seed = Int64.of_int seed; odd_gamma = golden_gamma; intercept = None }
++;;
++
++let copy { seed; odd_gamma; intercept } = { seed; odd_gamma; intercept }
+ let mix_bits z n = z lxor (z lsr n)
+ 
+ let mix64 z =
+@@ -63,13 +105,6 @@
+   if Int.( < ) n 24 then z lxor 0xaaaa_aaaa_aaaa_aaaaL else z
+ ;;
+ 
+-let%test_unit "odd gamma" =
+-  for input = -1_000_000 to 1_000_000 do
+-    let output = mix_odd_gamma (Int64.of_int input) in
+-    if not (is_odd output)
+-    then Error.raise_s [%message "gamma value is not odd" (input : int) (output : int64)]
+-  done
+-;;
+ 
+ let next_seed t =
+   let next = t.seed + t.odd_gamma in
+@@ -80,7 +115,7 @@
+ let of_seed_and_gamma ~seed ~gamma =
+   let seed = mix64 seed in
+   let odd_gamma = mix_odd_gamma gamma in
+-  { seed; odd_gamma }
++  { seed; odd_gamma; intercept = None }
+ ;;
+ 
+ let random_int64 random_state =
+@@ -94,9 +129,16 @@
+ ;;
+ 
+ let split t =
++  let child_hooks =
++    match t.intercept with
++    | None -> None
++    | Some i -> i.on_split ()
++  in
+   let seed = next_seed t in
+   let gamma = next_seed t in
+-  of_seed_and_gamma ~seed ~gamma
++  let child = of_seed_and_gamma ~seed ~gamma in
++  child.intercept <- child_hooks;
++  child
+ ;;
+ 
+ let next_int64 t = mix64 (next_seed t)
+@@ -104,11 +146,23 @@
+ (* [perturb] is not from any external source, but provides a way to mix in external
+    entropy with a pseudo-random state. *)
+ let perturb t salt =
++  (match t.intercept with
++   | None -> ()
++   | Some i ->
++     (match i.on_perturb salt with
++      | None -> ()
++      | Some hooks -> t.intercept <- Some hooks));
+   let next = t.seed + mix64 (Int64.of_int salt) in
+   t.seed <- next
+ ;;
+ 
+-let bool state = is_odd (next_int64 state)
++let bool_default state = is_odd (next_int64 state)
++
++let bool state =
++  match state.intercept with
++  | None -> bool_default state
++  | Some i -> i.bool state ~default:bool_default
++;;
+ 
+ (* We abuse terminology and refer to individual values as biased or unbiased.  More
+    properly, what is unbiased is the sampler that results if we keep only these "unbiased"
+@@ -118,32 +172,11 @@
+   draw - remainder <= draw_maximum - remainder_maximum
+ ;;
+ 
+-let%test_unit "remainder_is_unbiased" =
+-  (* choosing a range of 10 values based on a range of 105 values *)
+-  let draw_maximum = 104L in
+-  let remainder_maximum = 9L in
+-  let is_unbiased draw =
+-    let remainder = Int64.rem draw (Int64.succ remainder_maximum) in
+-    remainder_is_unbiased ~draw ~remainder ~draw_maximum ~remainder_maximum
+-  in
+-  for i = 0 to 99 do
+-    [%test_result: bool]
+-      (is_unbiased (Int64.of_int i))
+-      ~expect:true
+-      ~message:(Int.to_string i)
+-  done;
+-  for i = 100 to 104 do
+-    [%test_result: bool]
+-      (is_unbiased (Int64.of_int i))
+-      ~expect:false
+-      ~message:(Int.to_string i)
+-  done
+-;;
+ 
+ (* This implementation of bounded randomness is adapted from [Random.State.int*] in the
+    OCaml standard library.  The purpose is to use the minimum number of calls to
+    [next_int64] to produce a number uniformly chosen within the given range. *)
+-let int64 =
++let int64_default =
+   let open Int64.O in
+   let rec between state ~lo ~hi =
+     let draw = next_int64 state in
+@@ -171,6 +204,12 @@
+     else between state ~lo ~hi
+ ;;
+ 
++let int64 state ~lo ~hi =
++  match state.intercept with
++  | None -> int64_default state ~lo ~hi
++  | Some i -> i.int64 state ~lo ~hi ~default:int64_default
++;;
++
+ let int state ~lo ~hi =
+   let lo = Int64.of_int lo in
+   let hi = Int64.of_int hi in
+@@ -201,29 +240,17 @@
+ 
+ let double_ulp = 2. **. -53.
+ 
+-let%test_unit "double_ulp" =
+-  let open Float.O in
+-  match Word_size.word_size with
+-  | W64 ->
+-    assert (1.0 -. double_ulp < 1.0);
+-    assert (1.0 -. (double_ulp /. 2.0) = 1.0)
+-  | W32 ->
+-    (* 32-bit OCaml uses a 64-bit float representation but 80-bit float instructions, so
+-       rounding works differently due to the conversion back and forth. *)
+-    assert (1.0 -. double_ulp < 1.0);
+-    assert (1.0 -. (double_ulp /. 2.0) <= 1.0)
+-;;
+ 
+ let unit_float_from_int64 int64 = Int64.to_float (int64 lsr 11) *. double_ulp
+ 
+-let%test_unit "unit_float_from_int64" =
+-  let open Float.O in
+-  assert (unit_float_from_int64 0x0000_0000_0000_0000L = 0.);
+-  assert (unit_float_from_int64 0xffff_ffff_ffff_ffffL < 1.0);
+-  assert (unit_float_from_int64 0xffff_ffff_ffff_ffffL = 1.0 -. double_ulp)
+-;;
+ 
+-let unit_float state = unit_float_from_int64 (next_int64 state)
++let unit_float_default state = unit_float_from_int64 (next_int64 state)
++
++let unit_float state =
++  match state.intercept with
++  | None -> unit_float_default state
++  | Some i -> i.unit_float state ~default:unit_float_default
++;;
+ 
+ (* Note about roundoff error:
+ 
+@@ -233,16 +260,20 @@
+    with [x < 1.] such that [lo +. x *. (hi -. lo) = hi], so it would not be correct to
+    document this as being exclusive of [hi].
+ *)
+-let float =
++let float_default =
++  (* Uses the [_default] internals: when a hook delegates to [default],
++     the fallback must not re-enter the hooks, or a single [float] draw
++     would be observed twice (once whole, once as its internal
++     [unit_float]/[bool] draws). *)
+   let rec finite_float state ~lo ~hi =
+     let range = hi -. lo in
+     if Float.is_finite range
+-    then lo +. (unit_float state *. range)
++    then lo +. (unit_float_default state *. range)
+     else (
+       (* If [hi - lo] is infinite, then [hi + lo] is finite because [hi] and [lo] have
+          opposite signs. *)
+       let mid = (hi +. lo) /. 2. in
+-      if bool state
++      if bool_default state
+          (* Depending on rounding, the recursion with [~hi:mid] might be inclusive of [mid],
+          which would mean the two cases overlap on [mid]. The alternative is to increment
+          or decrement [mid] using [one_ulp] in either of the calls, but then if the first
+@@ -260,11 +291,13 @@
+     finite_float state ~lo ~hi
+ ;;
+ 
+-let%bench_fun "unit_float_from_int64" =
+-  let int64 = 1L in
+-  fun () -> unit_float_from_int64 int64
++let float state ~lo ~hi =
++  match state.intercept with
++  | None -> float_default state ~lo ~hi
++  | Some i -> i.float state ~lo ~hi ~default:float_default
+ ;;
+ 
++
+ module Log_uniform = struct
+   module Make (M : sig
+     include Int.S
+@@ -286,48 +319,14 @@
+       !n
+     ;;
+ 
+-    let%test_unit "bits_to_represent" =
+-      let test n expect = [%test_result: int] (bits_to_represent n) ~expect in
+-      test (M.of_int_exn 0) 0;
+-      test (M.of_int_exn 1) 1;
+-      test (M.of_int_exn 2) 2;
+-      test (M.of_int_exn 3) 2;
+-      test (M.of_int_exn 4) 3;
+-      test (M.of_int_exn 5) 3;
+-      test (M.of_int_exn 6) 3;
+-      test (M.of_int_exn 7) 3;
+-      test (M.of_int_exn 8) 4;
+-      test (M.of_int_exn 100) 7;
+-      test M.max_value (Int.pred M.num_bits)
+-    ;;
+ 
+     let min_represented_by_n_bits n =
+       if Int.equal n 0 then zero else shift_left one (Int.pred n)
+     ;;
+ 
+-    let%test_unit "min_represented_by_n_bits" =
+-      let test n expect = [%test_result: M.t] (min_represented_by_n_bits n) ~expect in
+-      test 0 (M.of_int_exn 0);
+-      test 1 (M.of_int_exn 1);
+-      test 2 (M.of_int_exn 2);
+-      test 3 (M.of_int_exn 4);
+-      test 4 (M.of_int_exn 8);
+-      test 7 (M.of_int_exn 64);
+-      test (Int.pred M.num_bits) (M.shift_right_logical M.min_value 1)
+-    ;;
+ 
+     let max_represented_by_n_bits n = pred (shift_left one n)
+ 
+-    let%test_unit "max_represented_by_n_bits" =
+-      let test n expect = [%test_result: M.t] (max_represented_by_n_bits n) ~expect in
+-      test 0 (M.of_int_exn 0);
+-      test 1 (M.of_int_exn 1);
+-      test 2 (M.of_int_exn 3);
+-      test 3 (M.of_int_exn 7);
+-      test 4 (M.of_int_exn 15);
+-      test 7 (M.of_int_exn 127);
+-      test (Int.pred M.num_bits) M.max_value
+-    ;;
+ 
+     let log_uniform state ~lo ~hi =
+       let min_bits = bits_to_represent lo in
+@@ -377,6 +376,34 @@
+   let nativeint = For_nativeint.log_uniform
+ end
+ 
++module Intercept = struct
++  type state = t
++
++  type t = intercept =
++    { int64 :
++        state
++        -> lo:int64
++        -> hi:int64
++        -> default:(state -> lo:int64 -> hi:int64 -> int64)
++        -> int64
++    ; float :
++        state
++        -> lo:float
++        -> hi:float
++        -> default:(state -> lo:float -> hi:float -> float)
++        -> float
++    ; unit_float : state -> default:(state -> float) -> float
++    ; bool : state -> default:(state -> bool) -> bool
++    ; on_split : unit -> t option
++    ; on_perturb : int -> t option
++    }
++end
++
++let with_intercept t intercept = { t with intercept = Some intercept }
++
++
++
++
+ module State = struct
+   type t = state
+ 
+--- a/src/splittable_random.mli
++++ b/src/splittable_random.mli
+@@ -45,6 +45,55 @@
+ val split : t -> t
+ 
+ (** Legacy aliases for the preceding definitions. *)
++(** Interception hooks for property-testing engines that need to observe,
++    record, or replay the stream of bounded draws (for example, choice-tape
++    shrinkers in the style of Python Hypothesis's Conjecture engine).
++
++    A state carrying hooks consults them on each draw, passing the default
++    sampler so the hook can fall back to ordinary sampling; states without
++    hooks (the default, and everything this module constructs itself) behave
++    exactly as before, at the cost of one branch per draw. All bounded
++    integer draws ([int], [int32], [int63], [nativeint], and [Log_uniform])
++    delegate to [int64], so the [int64] hook observes every one of them with
++    its bounds.
++
++    Seam v2: [on_split] returns the hooks to install on the freshly split
++    state ([None] leaves it hook-free), and [on_perturb] receives the salt
++    and may return replacement hooks for this state ([None] keeps the
++    current hooks). Engines use these to key split-off streams, so that
++    randomly generated functions become observable and shrinkable; see
++    design/stream-keyed-tapes.md. *)
++module Intercept : sig
++  type state := t
++
++  type t =
++    { int64 :
++        state
++        -> lo:int64
++        -> hi:int64
++        -> default:(state -> lo:int64 -> hi:int64 -> int64)
++        -> int64
++    ; float :
++        state
++        -> lo:float
++        -> hi:float
++        -> default:(state -> lo:float -> hi:float -> float)
++        -> float
++    ; unit_float : state -> default:(state -> float) -> float
++    ; bool : state -> default:(state -> bool) -> bool
++    ; on_split : unit -> t option
++    ; on_perturb : int -> t option
++    }
++end
++
++(** [with_intercept t hooks] returns a snapshot copy of [t] whose draws
++    consult [hooks]; [t] itself is unchanged. [copy] preserves hooks;
++    [split] calls [on_split] and installs whatever hooks it returns on the
++    freshly split state ([None] leaves the split state hook-free);
++    [perturb] calls [on_perturb] before mixing in the salt and installs
++    whatever hooks it returns ([None] keeps the current hooks). *)
++val with_intercept : t -> Intercept.t -> t
++
+ module State : sig
+   type nonrec t = t
+ 
+--- a/src/splittable_random.ml
++++ b/src/splittable_random.ml
+@@ -34,6 +34,8 @@
+ 
+ open Int64.O
+ 
++type span_label = ..
++
+ let ( lxor ) = Int64.bit_xor
+ let ( lor ) = Int64.bit_or
+ let ( land ) = Int64.bit_and
+@@ -66,6 +68,13 @@
+       t -> lo:float -> hi:float -> default:(t -> lo:float -> hi:float -> float) -> float
+   ; unit_float : t -> default:(t -> float) -> float
+   ; bool : t -> default:(t -> bool) -> bool
++  ; bool_with_probability :
++      t
++      -> probability:float
++      -> default:(t -> probability:float -> bool)
++      -> bool
++  ; on_span_start : span_label -> unit
++  ; on_span_stop : unit -> unit
+   ; on_split : unit -> intercept option
+   ; on_perturb : int -> intercept option
+   }
+@@ -252,6 +261,32 @@
+   | Some i -> i.unit_float state ~default:unit_float_default
+ ;;
+ 
++let bool_with_probability_default state ~probability =
++  Float.(unit_float_default state < probability)
++;;
++
++let bool_with_probability state ~probability =
++  if Float.is_nan probability || Float.(probability < 0. || probability > 1.)
++  then raise_s [%message "bool_with_probability: invalid probability" (probability : float)];
++  if Float.equal probability 0.
++  then false
++  else if Float.equal probability 1.
++  then true
++  else (
++    match state.intercept with
++    | None -> bool_with_probability_default state ~probability
++    | Some i ->
++      i.bool_with_probability state ~probability ~default:bool_with_probability_default)
++;;
++
++let with_span state label ~f =
++  match state.intercept with
++  | None -> f ()
++  | Some i ->
++    i.on_span_start label;
++    Exn.protect ~f ~finally:(fun () -> i.on_span_stop ())
++;;
++
+ (* Note about roundoff error:
+ 
+    Although [float state ~lo ~hi] is nominally inclusive of endpoints, we are relying on
+@@ -394,6 +429,13 @@
+         -> float
+     ; unit_float : state -> default:(state -> float) -> float
+     ; bool : state -> default:(state -> bool) -> bool
++    ; bool_with_probability :
++        state
++        -> probability:float
++        -> default:(state -> probability:float -> bool)
++        -> bool
++    ; on_span_start : span_label -> unit
++    ; on_span_stop : unit -> unit
+     ; on_split : unit -> t option
+     ; on_perturb : int -> t option
+     }
+--- a/src/splittable_random.mli
++++ b/src/splittable_random.mli
+@@ -19,6 +19,9 @@
+ 
+ type t
+ 
++(** Extensible structural labels for property-testing engines. *)
++type span_label = ..
++
+ (** Create a new [t] seeded from the given random state. This allows nondeterministic
+     initialization, for example in the case that the input state was created using
+     [Random.make_self_init].
+@@ -48,6 +51,5 @@
+ val split : t -> t
+ 
+-(** Legacy aliases for the preceding definitions. *)
+ (** Interception hooks for property-testing engines that need to observe,
+     record, or replay the stream of bounded draws (for example, choice-tape
+     shrinkers in the style of Python Hypothesis's Conjecture engine).
+@@ -65,6 +67,12 @@
+     current hooks). Engines use these to key split-off streams, so that
+     randomly generated functions become observable and shrinkable; see
+-    design/stream-keyed-tapes.md. *)
++    design/stream-keyed-tapes.md.
++
++    This is an experimental, unreleased seam.  Its record shape may change
++    while Tapecheck is prototyping the structural information that an
++    upstream API would need.  Once published, adding required record fields
++    would break clients that construct interceptors, so the accepted API must
++    either freeze this shape or provide an abstraction that can evolve. *)
+ module Intercept : sig
+   type state := t
+ 
+@@ -81,6 +89,19 @@
+         -> float
+     ; unit_float : state -> default:(state -> float) -> float
+     ; bool : state -> default:(state -> bool) -> bool
++    ; bool_with_probability :
++        state
++        -> probability:float
++        -> default:(state -> probability:float -> bool)
++        -> bool
++        (** Intercepts non-forced weighted choices.  The probability controls
++            sampling only, so a replaying engine may supply either Boolean. *)
++    ; on_span_start : span_label -> unit
++    ; on_span_stop : unit -> unit
++      (** Span callbacks must not raise.  They are notifications rather than
++          recovery boundaries; an exception from a callback is propagated and
++          may prevent the body from running.  If both the body and stop
++          callback raise, [Exn.Finally] preserves both exceptions. *)
+     ; on_split : unit -> t option
+     ; on_perturb : int -> t option
+     }
+@@ -110,6 +131,20 @@
+ (** Produces a random, fair boolean. *)
+ val bool : t -> bool
+ 
++(** [bool_with_probability t ~probability] is true with the given probability.
++    [probability] must be finite and between zero and one, inclusive.  Zero and
++    one are forced: they do not advance [t] and bypass any interceptor because
++    no random choice was made.  For other probabilities, the probability is
++    sampling metadata only; an interceptor may replay either Boolean. *)
++val bool_with_probability : t -> probability:float -> bool
++
++(** [with_span t label ~f] notifies an attached observer of a structurally
++    deletable region around [f].  With no interceptor it calls [f] directly.
++    A started span is stopped even if [f] raises.  Observer callbacks must not
++    raise; if they do, their exception is propagated.  If both [f] and the
++    stop callback raise, [Exn.Finally] preserves both exceptions. *)
++val with_span : t -> span_label -> f:(unit -> 'a) -> 'a
++
+ (** Produce a random number uniformly distributed in the given inclusive range.  (In the
+     case of [float], [hi] may or may not be attainable, depending on rounding.)  *)
+ val int : t -> lo:int -> hi:int -> int

@@ -1,5 +1,7 @@
 open! Base
 
+type Splittable_random.span_label += List_element
+
 module T : sig
   type +'a t
 
@@ -239,7 +241,11 @@ let result ok_t err_t =
 
 let list_generic ?min_length ?max_length elt_gen =
   let%bind sizes = sizes ?min_length ?max_length () in
-  List.map sizes ~f:(fun size -> with_size ~size elt_gen) |> all
+  List.map sizes ~f:(fun size ->
+    create (fun ~size:_ ~random ->
+      Splittable_random.with_span random List_element ~f:(fun () ->
+        generate elt_gen ~size ~random)))
+  |> all
 ;;
 
 let list elt_gen = list_generic elt_gen

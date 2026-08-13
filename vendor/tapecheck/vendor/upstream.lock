@@ -1,0 +1,3 @@
+# name                 repository                                      tag      peeled commit
+base_quickcheck        https://github.com/janestreet/base_quickcheck.git v0.17.1 f8035fdf9ce8a995579d21c16480b11530a6e7e9
+splittable_random      https://github.com/janestreet/splittable_random.git v0.17.0 0f4a6ef59a640f8ac38a8140f0800895189230fe

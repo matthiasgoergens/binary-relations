@@ -1,6 +1,8 @@
 Vendored from https://github.com/matthiasgoergens/tapecheck (MIT) at
-`b430a44`, trees `engine/`, `tape/`, `vendor/`, plus `laws/` which is this
-project.
+`26d3dcd` (master, 2026-08-13; refreshed from `b430a44`), trees `engine/`,
+`tape/`, `vendor/`, plus `laws/` which is this project. Upstream's own
+`vendor/upstream.lock` records the commits its vendored Jane Street code is
+patched from.
 
 **Why a copy and not a git submodule.** A submodule would be the better shape
 for the code, but it does not work here, and it fails for the same root cause
