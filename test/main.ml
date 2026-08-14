@@ -1035,6 +1035,7 @@ let test_long_cycle_gap () =
 
     let triangle = meet (of_relation g >> of_relation g) (of_relation g)
     let square = meet (of_relation g >> of_relation g >> of_relation g) (of_relation g)
+    let pentagon = meet (of_relation g >> of_relation g >> of_relation g >> of_relation g) (of_relation g)
   end in
   let module S = Q (Symbolic) in
   let measure t =
@@ -1048,21 +1049,35 @@ let test_long_cycle_gap () =
   let sq_a, sq_plain = measure S.square in
   let sq_planned = Plan.optimise S.square in
   let sq_b, sq_fused = measure sq_planned in
+  let pen_a, pen_plain = measure S.pentagon in
+  let pen_planned = Plan.optimise S.pentagon in
+  let pen_b, pen_fused = measure pen_planned in
   printf "   triangle : %6d -> %6d  (%.1fx)\n" tri_plain tri_fused
     (Float.of_int tri_plain /. Float.of_int (Int.max 1 tri_fused));
   printf "   4-cycle  : %6d -> %6d  (%.1fx)\n" sq_plain sq_fused
     (Float.of_int sq_plain /. Float.of_int (Int.max 1 sq_fused));
+  printf "   5-cycle  : %6d -> %6d  (%.1fx)\n" pen_plain pen_fused
+    (Float.of_int pen_plain /. Float.of_int (Int.max 1 pen_fused));
   printf "   4-cycle planned as: %s\n" (Symbolic.to_string sq_planned);
+  printf "   5-cycle planned as: %s\n" (Symbolic.to_string pen_planned);
   (* A speedup that computes the wrong answer is worth nothing, so check that
      first. The random-tree equivalence test covers this shape too, but not
      with data chosen to make the fusion fire. *)
   check "the fused triangle agrees with the unfused one" (Relation.equal tri_a tri_b);
   check "the fused 4-cycle agrees with the unfused one" (Relation.equal sq_a sq_b);
+  check "the fused 5-cycle agrees with the unfused one" (Relation.equal pen_a pen_b);
   check "the fused 4-cycle is not vacuous" (Relation.card sq_b > 0);
+  check "the fused 5-cycle is not vacuous" (Relation.card pen_b > 0);
   check "the triangle is fused well" (tri_fused * 10 < tri_plain);
   (* Was pinned as an open gap at 1.0x; three-way fusion closed it. *)
   check "and so is the longer cycle, now that fusion splits it in the middle"
-    (sq_fused * 10 < sq_plain)
+    (sq_fused * 10 < sq_plain);
+  (* The 5-cycle number is a measurement, not a gate: what the bushy DP plus
+     two-way fusion leaves on the table is the materialised pair of 2-chains
+     inside the fused meet, and whether that gap earns [meet_composeN] is the
+     open question this line exists to answer. *)
+  printf "   => 5-cycle: what is left after bushy DP + meet_compose is the\n";
+  printf "      materialised (a>>a) intermediates inside the fused probe\n"
 
 
 
